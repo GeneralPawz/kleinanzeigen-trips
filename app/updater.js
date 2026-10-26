@@ -25,7 +25,7 @@ async function fetchLatest() {
   if (!res.ok) throw new Error(`GitHub antwortete mit HTTP ${res.status}`);
   const r = await res.json();
   const apk = (r.assets || []).find((a) => /\.apk$/i.test(a.name));
-  return { tag: r.tag_name, notes: r.body || '', apkUrl: apk?.browser_download_url || null, apkName: apk?.name || 'troedeltour.apk' };
+  return { tag: r.tag_name, notes: (r.body || '').replace(/^\*\*Full Changelog\*\*.*$/gm, '').replace(/\*\*/g, '').trim(), apkUrl: apk?.browser_download_url || null, apkName: apk?.name || 'troedeltour.apk' };
 }
 
 // ---- UI (own DOM, themed with the app's CSS variables) -------------------------------------
@@ -108,6 +108,8 @@ async function startInstall(rel) {
     label.textContent = `${(bytes / 1048576).toFixed(1)} von ${(contentLength / 1048576).toFixed(1)} MB`;
   });
   try {
+    // downloadFile ignores `recursive` on Android, so the folder must exist beforehand
+    await Filesystem.mkdir({ path: 'update', directory: Directory.Cache, recursive: true }).catch(() => {});
     await Filesystem.downloadFile({ url: rel.apkUrl, path: `update/${rel.apkName}`, directory: Directory.Cache, recursive: true, progress: true });
     const { uri } = await Filesystem.getUri({ path: `update/${rel.apkName}`, directory: Directory.Cache });
     pendingApk = { tag: rel.tag, uri };
