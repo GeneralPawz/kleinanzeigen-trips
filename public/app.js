@@ -134,15 +134,16 @@ let saveTimer = null;
 let saveChain = Promise.resolve();
 
 function autoName() {
-  const a = shortLabel(state.stops[0]?.text), b = shortLabel(state.stops[state.stops.length - 1]?.text);
-  return a && b ? `${a}–${b}` : '';
+  // one short word fits the top bar: the destination's place name
+  const b = shortLabel(state.stops[state.stops.length - 1]?.text).replace(/^(Landkreis|Kreis|Region)\s+/i, '');
+  return b.split(/[\s,(]/)[0] || '';
 }
 
 function numOrNull(v) { return v !== '' && v != null && isFinite(+v) ? +v : null; }
 
 function routePayload() {
   return {
-    name: state.routeName.trim() || autoName() || 'Neue Route',
+    name: state.routeName.trim() || autoName() || 'Tour',
     waypoints: state.stops.filter((s) => s.point).map((s) => ({ label: s.text, lat: s.point.lat, lon: s.point.lon, radiusKm: s.radiusKm || 0 })),
     items: state.items.filter((i) => i.query.trim()).map((i) => ({ query: i.query.trim(), minPrice: numOrNull(i.minPrice), maxPrice: numOrNull(i.maxPrice) })),
     corridorKm: state.corridor,
@@ -1096,7 +1097,7 @@ async function openRoute(id) {
 async function newRoute() {
   try {
     await flushSave();
-    const r = await api('/api/routes', { method: 'POST', body: { name: 'Neue Route' } });
+    const r = await api('/api/routes', { method: 'POST', body: { name: 'Tour' } });
     applyRoute(r);
     state.nameAuto = true;
     map.setView([51.16, 10.45], 6);

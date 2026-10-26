@@ -10,7 +10,9 @@
 .seg button:hover { background: var(--lime-tint); }
 .seg button[aria-pressed=true] { background: var(--green); color: #fff; }
 .seg :focus-visible { outline-offset: -3px; }
-.mode-box { margin-bottom: 12px; }
+.mode-box { margin: 16px 0 12px; }
+.merk-btn { position: relative; }
+.merk-btn .badge { position: absolute; top: 2px; right: 0; min-width: 16px; font-size: 11px; line-height: 16px; padding: 0 4px; }
 .mode-box .small-note { margin: 8px 0 0; }
 .mode-box .error { margin: 6px 0 0; font-weight: 700; }
 .corridor { transition: opacity .15s; }
@@ -121,7 +123,7 @@ html[data-theme=dark] .bubble .heart-btn, html[data-theme=dark] .bubble .chat-ch
   .stops, .items { gap: 8px; }
   .row { margin-top: 8px; gap: 8px; }
   .row .btn { padding-left: 14px; padding-right: 14px; }
-  .mode-box { margin-bottom: 8px; }
+  .mode-box { margin: 14px 0 8px; }
   .corridor { margin-top: 10px; }
   .foot { padding: 0 4px 4px; }
   /* waypoint: [handle][input][radius chip][remove] on one line */
