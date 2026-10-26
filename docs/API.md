@@ -1,6 +1,7 @@
 # Trödeltour — API contract (backend ⇄ frontend)
 
 Stack: Node 22, Express (ESM, plain JS, JSDoc types), static frontend in `public/` served by Express. No build step.
+Code layout: `core/` = platform-independent ES modules (search, parsing, store logic; HTTP, storage and the PLZ table are injected; no `node:` imports) shared with the Capacitor app; `server/` = thin Node adapters (express, fs storage, fetch, mail). `core/index.js` exports `createLocalApi({ http, storage, plzTable })` whose `handle(method, path, body) → {status, json}` implements exactly this contract without a server (mail endpoints answer `configured:false`). `http` = `{ getText(url, headers), getJson(url, headers), postJson?(url, body, headers) }`, rejecting with an Error that has `status` on non-2xx; `storage` = `{ load(): Promise<obj>, save(obj): Promise<void> }`.
 Run: `npm install && npm start` → http://localhost:3000. Port via `PORT`. Optional env in `.env`: `ORS_API_KEY` (else OSRM demo), `CONTACT_EMAIL` (Nominatim UA).
 
 All JSON. Errors: `{ "error": "message" }` with 4xx/5xx.
@@ -19,6 +20,7 @@ All JSON. Errors: `{ "error": "message" }` with 4xx/5xx.
   "items": [{ "query": "Fahrrad", "minPrice": 50, "maxPrice": 300 }],
   "stops": [{ "lat": 51.54, "lon": 9.93, "label": "Göttingen", "radiusKm": 10 }] }
 ```
+**Radius-only mode:** `corridorKm: 0` is accepted when `stops` contains at least one stop with `radiusKm > 0` (otherwise 400). Then no corridor samples are searched and only ads within a stop radius are returned (`nearStop != null`; `distanceToRouteKm` is still reported).
 `stops` is optional (max 10). `radiusKm` ∈ 0 (off), 5, 10, 20, 30, 50, otherwise 400; stops with 0 are ignored; missing `label` becomes "Stopp N".
 Besides the corridor samples (every ~25 km, radius 30), the nearest PLZ of each stop is searched with the smallest Kleinanzeigen radius step ≥ `radiusKm`; identical (PLZ, radius) searches run once. A result is kept if it is within `corridorKm` of the route **or** within `radiusKm` (haversine) of a stop.
 → `{ "jobId": "abc123" }`
@@ -49,15 +51,15 @@ Single JSON file, created on first write, written atomically (temp file + rename
   "waypoints": [{ "label": "Kassel", "lat": 51.31, "lon": 9.48, "radiusKm": 0 },
                 { "label": "Göttingen", "lat": 51.54, "lon": 9.93, "radiusKm": 10 }],
   "items": [{ "query": "Fahrrad", "minPrice": 50, "maxPrice": null }],
-  "corridorKm": 20, "geometry": "<LineString or null>", "distanceKm": 48.2, "durationMin": 40,
+  "corridorKm": 20, "searchMode": "corridor", "geometry": "<LineString or null>", "distanceKm": 48.2, "durationMin": 40,
   "results": ["<search result objects, max 500>"], "searchedAt": "2026-10-26T10:05:00.000Z",
   "updatedAt": "2026-10-26T10:05:01.000Z" }
 ```
-- `POST /api/routes` with the same fields (without `id`/`updatedAt`) → **201** + full route. Only `name` (1–120 chars) is required; defaults: `waypoints: []`, `items: []`, `corridorKm: 20`, `geometry/distanceKm/durationMin/searchedAt: null`, `results: []`.
+- `POST /api/routes` with the same fields (without `id`/`updatedAt`) → **201** + full route. Only `name` (1–120 chars) is required; defaults: `waypoints: []`, `items: []`, `corridorKm: 20`, `searchMode` absent, `geometry/distanceKm/durationMin/searchedAt: null`, `results: []`.
 - `PUT /api/routes/:id` — any subset of the fields; given fields replace the stored ones (arrays wholesale), others stay → full route. `updatedAt` is set by the server.
 - `DELETE /api/routes/:id` → `{ "ok": true }`
 
-Validation: `waypoints` ≤ 10, each with finite `lat`/`lon`, `radiusKm` ∈ 0,5,10,20,30,50 (default 0), `label` string; `items` ≤ 50 each with non-empty `query`, `minPrice`/`maxPrice` number or null; `corridorKm` in (0, 200]; `geometry` LineString or null; `results` array of objects (silently truncated to the first 500); `searchedAt` ISO string or null.
+Validation: `waypoints` ≤ 10, each with finite `lat`/`lon`, `radiusKm` ∈ 0,5,10,20,30,50 (default 0), `label` string; `items` ≤ 50 each with non-empty `query`, `minPrice`/`maxPrice` number or null; `corridorKm` in [0, 200] (0 = radius-only, see search); optional `searchMode` `"corridor"` | `"radius"` (which mode the route was saved in; absent = corridor; persisted, not interpreted by the server); `geometry` LineString or null; `results` array of objects (silently truncated to the first 500); `searchedAt` ISO string or null.
 
 ### Merkliste (app-local favourites, global across routes, keyed by adid)
 - `GET /api/merkliste` → `[{ "adid": "3012345678", "ad": { "adid": "3012345678", "title": "...", "url": "...", "...": "result snapshot" }, "routeId": "a1b2c3d4e5f6", "savedAt": "2026-10-26T10:06:00.000Z" }]` (newest first)

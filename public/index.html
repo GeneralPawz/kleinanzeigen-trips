@@ -2,14 +2,25 @@
 <html lang="de">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Trödeltour – für Kleinanzeigen</title>
   <meta name="theme-color" content="#1D4B00">
+  <meta name="color-scheme" content="light dark">
+  <script>
+    // apply the saved theme before first paint (System follows prefers-color-scheme)
+    (function () {
+      var p = localStorage.getItem("troedeltour.theme") || "system";
+      var dark = p === "dark" || (p === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
+      document.documentElement.dataset.theme = dark ? "dark" : "light";
+      var m = document.querySelector("meta[name=theme-color]"); if (m) m.content = dark ? "#0b1a05" : "#1D4B00";
+    })();
+  </script>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
     integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
   <link rel="stylesheet" href="app.css">
   <link rel="stylesheet" href="panels.css">
+  <link rel="stylesheet" href="ui.css">
 </head>
 <body>
   <header class="topbar">
@@ -25,11 +36,13 @@
     </div>
     <nav class="top-actions" aria-label="Merkliste">
       <button type="button" id="open-merk" class="account"><span class="long">Meine </span>Merkliste <span id="merk-count" class="badge" hidden></span></button>
+      <button type="button" id="open-settings" class="gear-btn" aria-haspopup="dialog" aria-controls="nav-drawer" aria-label="Einstellungen" title="Einstellungen"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
       <a class="account ext" href="https://www.kleinanzeigen.de/m-merkliste.html" target="_blank" rel="noopener" title="Merkliste auf Kleinanzeigen öffnen" aria-label="Merkliste auf Kleinanzeigen öffnen">↗</a>
     </nav>
   </header>
 
   <main class="layout">
+    <div class="panes" id="panes">
     <section class="panel" id="panel" aria-label="Planung und Ergebnisse">
       <section class="card step" aria-labelledby="h-route">
         <h2 id="h-route"><span class="num">1</span> Route</h2>
@@ -48,7 +61,15 @@
         <div class="row">
           <button type="button" id="add-item" class="btn btn-ghost">+ Suchbegriff</button>
         </div>
-        <div class="corridor">
+        <div class="mode-box">
+          <div class="seg" id="mode-seg" role="group" aria-label="Suchmodus">
+            <button type="button" id="mode-corridor" data-mode="corridor" aria-pressed="true">Entlang der Route (Korridor)</button>
+            <button type="button" id="mode-radius" data-mode="radius" aria-pressed="false">Um Orte (Radius je Stopp)</button>
+          </div>
+          <p id="mode-hint" class="small-note"></p>
+          <p id="mode-error" class="error" role="alert" hidden></p>
+        </div>
+        <div class="corridor" id="corridor-box">
           <label for="corridor">Suchkorridor: <output id="corridor-out" for="corridor">20 km</output> links und rechts der Route</label>
           <input type="range" id="corridor" min="5" max="50" step="1" value="20">
         </div>
@@ -75,10 +96,18 @@
       <footer class="foot">Karte © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>-Mitwirkende. Inoffizielles Hilfsmittel, nicht mit Kleinanzeigen verbunden.</footer>
     </section>
 
-    <div class="map-wrap">
+    <div class="map-wrap" id="map-wrap">
       <div id="map" role="application" aria-label="Karte mit Route und Anzeigen"></div>
+      <div class="edge-swipe" id="edge-swipe" aria-hidden="true"></div>
+    </div>
     </div>
   </main>
+
+  <nav class="tabbar" id="tabbar" role="tablist" aria-label="Ansicht">
+    <button type="button" role="tab" id="pane-tab-0" data-pane="0" aria-selected="true">Planung</button>
+    <button type="button" role="tab" id="pane-tab-1" data-pane="1" aria-selected="false">Karte</button>
+    <span class="tab-ind" aria-hidden="true"></span>
+  </nav>
 
   <div id="backdrop" class="backdrop"></div>
 
@@ -90,16 +119,36 @@
     <div class="tabs" role="tablist" aria-label="Menü">
       <button type="button" role="tab" id="tab-routes" aria-controls="panel-routes" aria-selected="true">Routen</button>
       <button type="button" role="tab" id="tab-merk" aria-controls="panel-merk" aria-selected="false">Merkliste</button>
+      <button type="button" role="tab" id="tab-settings" aria-controls="panel-settings" aria-selected="false">Einstellungen</button>
     </div>
     <div class="drawer-body" id="panel-routes" role="tabpanel" aria-labelledby="tab-routes">
       <button type="button" id="new-route" class="btn btn-primary btn-wide">+ Neue Route</button>
       <ul id="route-list" class="route-list"></ul>
-      <section id="mail-section" class="mail-section" aria-label="E-Mail-Hinweise"></section>
     </div>
     <div class="drawer-body" id="panel-merk" role="tabpanel" aria-labelledby="tab-merk" hidden>
       <p class="info small-note">Deine Merkliste liegt nur in dieser App. Auf Kleinanzeigen selbst merkst du dort separat:
         <a href="https://www.kleinanzeigen.de/m-merkliste.html" target="_blank" rel="noopener">Merkliste auf Kleinanzeigen ↗</a></p>
       <div id="merk-list"></div>
+    </div>
+    <div class="drawer-body" id="panel-settings" role="tabpanel" aria-labelledby="tab-settings" hidden>
+      <section class="set-group" aria-labelledby="set-theme">
+        <h3 id="set-theme">Darstellung</h3>
+        <div class="seg" id="theme-seg" role="group" aria-label="Darstellung">
+          <button type="button" data-theme-pref="system" aria-pressed="false">System</button>
+          <button type="button" data-theme-pref="light" aria-pressed="false">Hell</button>
+          <button type="button" data-theme-pref="dark" aria-pressed="false">Dunkel</button>
+        </div>
+      </section>
+      <section class="set-group" aria-labelledby="set-app">
+        <h3 id="set-app">App</h3>
+        <p id="app-version"></p>
+        <button type="button" id="check-update" class="btn btn-small btn-ghost" hidden>Nach Updates suchen</button>
+        <p id="update-note"></p>
+      </section>
+      <section class="set-group" aria-labelledby="set-mail">
+        <h3 id="set-mail">E-Mail</h3>
+        <section id="mail-section" class="mail-section" aria-label="E-Mail-Hinweise"></section>
+      </section>
     </div>
   </aside>
 

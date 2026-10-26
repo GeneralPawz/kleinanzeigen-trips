@@ -5,7 +5,13 @@ export const mailApi = Router();
 
 mailApi.get('/mail/status', (_q, res) => res.json(mailStatus()));
 mailApi.post('/mail/check', async (_q, res) => res.json(await checkMail()));
-mailApi.get('/mail/notifications', (_q, res) => res.json(mailNotifications()));
+mailApi.get('/mail/notifications', async (_q, res) => {
+  try {
+    res.json(await mailNotifications());
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
+});
 mailApi.post('/mail/seen/:adid', (q, res) => {
   if (!/^[\w-]{1,40}$/.test(q.params.adid)) return res.status(400).json({ error: 'ungültige adid' });
   markSeen(q.params.adid);

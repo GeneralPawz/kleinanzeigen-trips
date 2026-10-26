@@ -1,9 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { setTable } from '../server/plz.js';
-import { buildSearchUrl, slugify } from '../server/kleinanzeigen/client.js';
-import { BlockedError } from '../server/kleinanzeigen/client.js';
-import { startSearch, getJob, validateSearch } from '../server/search.js';
+import { createPlz } from '../core/plz.js';
+import { buildSearchUrl, slugify, BlockedError } from '../core/kleinanzeigen.js';
+import { createSearchManager, validateSearch } from '../core/search.js';
+
+// helper: manager over a PLZ table and a fake search function
+const mgr = (table, search) => createSearchManager({ search, plz: createPlz({ ...table, cities: {} }) });
 
 test('slugify and URL building', () => {
   assert.equal(slugify('Kühl Schrank'), 'kühl-schrank');
@@ -25,9 +27,9 @@ test('validateSearch', () => {
   );
 });
 
-const waitDone = async (id) => {
+const waitDone = async (m, id) => {
   for (let i = 0; i < 100; i++) {
-    const j = getJob(id);
+    const j = m.getJob(id);
     if (j.status !== 'running') return j;
     await new Promise((r) => setTimeout(r, 10));
   }
@@ -41,10 +43,10 @@ const body = {
 };
 
 test('job filters by corridor, dedupes, sorts by kmAlongRoute', async () => {
-  setTable({ plz: { 11111: [50, 10], 22222: [51, 10.05], 33333: [51.5, 12] }, cities: {} });
+  const table = { plz: { 11111: [50, 10], 22222: [51, 10.05], 33333: [51.5, 12] } };
   const mk = (adid, plz) => ({ adid, title: adid, plz, city: 'X', url: `u/${adid}` });
-  const job = startSearch(body, async ({ plz }) => [mk('b', '22222'), mk('a', '11111'), mk('far', '33333')]);
-  const j = await waitDone(job);
+  const m = mgr(table, async () => [mk('b', '22222'), mk('a', '11111'), mk('far', '33333')]);
+  const j = await waitDone(m, m.startSearch(body));
   assert.equal(j.status, 'done');
   assert.deepEqual(j.results.map((r) => r.adid), ['a', 'b']);
   assert.ok(j.results[1].distanceToRouteKm < 5);
@@ -53,7 +55,7 @@ test('job filters by corridor, dedupes, sorts by kmAlongRoute', async () => {
 
 test('stop radius: keeps ads near a stop outside the corridor, tags nearStop, dedupes samples', async () => {
   // route runs along lon 10; the stop at (51, 10.5) is ~35 km off the route
-  setTable({ plz: { 11111: [50, 10], 44444: [51, 10.5], 55555: [51, 11.5] }, cities: {} });
+  const table = { plz: { 11111: [50, 10], 44444: [51, 10.5], 55555: [51, 11.5] } };
   const calls = [];
   const mk = (adid, plz) => ({ adid, title: adid, plz, city: 'X', url: `u/${adid}` });
   const b = {
@@ -65,11 +67,11 @@ test('stop radius: keeps ads near a stop outside the corridor, tags nearStop, de
       { lat: 50, lon: 10, label: 'aus', radiusKm: 0 },
     ],
   };
-  const job = startSearch(b, async (q) => {
+  const m = mgr(table, async (q) => {
     calls.push(`${q.plz}:${q.radius}`);
     return [mk('near', '44444'), mk('far', '55555'), mk('onroute', '11111')];
   });
-  const j = await waitDone(job);
+  const j = await waitDone(m, m.startSearch(b));
   assert.equal(j.status, 'done');
   assert.equal(new Set(calls).size, calls.length, 'no duplicate (plz,radius) searches');
   assert.ok(calls.includes('44444:10'));
@@ -89,13 +91,32 @@ test('validateSearch checks stops', () => {
 });
 
 test('blocked keeps partial results', async () => {
-  setTable({ plz: { 11111: [50, 10], 22222: [51, 10], 33333: [52, 10] }, cities: {} });
+  const table = { plz: { 11111: [50, 10], 22222: [51, 10], 33333: [52, 10] } };
   let n = 0;
-  const job = startSearch(body, async () => {
+  const m = mgr(table, async () => {
     if (++n === 2) throw new BlockedError();
     return [{ adid: 'a', title: 'a', plz: '11111', city: 'X', url: 'u' }];
   });
-  const j = await waitDone(job);
+  const j = await waitDone(m, m.startSearch(body));
   assert.equal(j.status, 'blocked');
   assert.equal(j.results.length, 1);
+});
+
+test('radius-only: corridorKm 0 needs a stop radius, searches only stops, keeps only stop hits', async () => {
+  assert.ok(validateSearch({ ...body, corridorKm: 0 }));
+  assert.ok(validateSearch({ ...body, corridorKm: 0, stops: [{ lat: 1, lon: 2, radiusKm: 0 }] }));
+  assert.equal(validateSearch({ ...body, corridorKm: 0, stops: [{ lat: 1, lon: 2, radiusKm: 10 }] }), null);
+  const table = { plz: { 11111: [50, 10], 44444: [51, 10.5] } };
+  const calls = [];
+  const m = mgr(table, async (q) => {
+    calls.push(`${q.plz}:${q.radius}`);
+    return [
+      { adid: 'near', title: 'n', plz: '44444', city: 'X', url: 'u' },
+      { adid: 'onroute', title: 'o', plz: '11111', city: 'X', url: 'u' },
+    ];
+  });
+  const j = await waitDone(m, m.startSearch({ ...body, corridorKm: 0, stops: [{ lat: 51, lon: 10.5, label: 'Oma', radiusKm: 10 }] }));
+  assert.equal(j.status, 'done');
+  assert.deepEqual(calls, ['44444:10']);
+  assert.deepEqual(j.results.map((r) => r.adid), ['near']);
 });

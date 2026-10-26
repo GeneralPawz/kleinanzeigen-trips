@@ -247,19 +247,19 @@ export function mailStatus() {
   };
 }
 
-function knownAds() {
+async function knownAds() {
   const st = getStore();
   const ads = new Map();
   const add = (a) => a?.adid && a.title && ads.set(String(a.adid), { adid: String(a.adid), title: a.title });
-  for (const { id } of st.listRoutes()) st.getRoute(id).results.forEach(add);
-  st.listMerkliste().forEach((e) => add(e.ad));
+  for (const { id } of await st.listRoutes()) (await st.getRoute(id)).results.forEach(add);
+  (await st.listMerkliste()).forEach((e) => add(e.ad));
   return [...ads.values()];
 }
 
-export function mailNotifications() {
+export async function mailNotifications() {
   if (!mailConfig().configured) return { byAd: {}, unmatched: [] };
   const i = idx();
-  return buildNotifications(i.items, knownAds(), i.seen);
+  return buildNotifications(i.items, await knownAds(), i.seen);
 }
 
 export function markSeen(adid) {

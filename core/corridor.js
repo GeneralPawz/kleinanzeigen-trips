@@ -1,5 +1,4 @@
 import { haversineKm, pointToSegment } from './geo.js';
-import { nearestPlz } from './plz.js';
 
 export const RADIUS_STEPS = [5, 10, 20, 30, 50, 100];
 
@@ -50,14 +49,15 @@ export function distanceToRoute(lat, lon, coords, cum = cumulativeKm(coords)) {
 
 /**
  * Search samples along the route: one per distinct nearest PLZ.
+ * @param {ReturnType<typeof import('./plz.js').createPlz>} plz
  * @returns {{plz:string,lat:number,lon:number,radius:number,km:number}[]}
  */
-export function buildSamples(coords, { stepKm = 25, radius = 30 } = {}) {
+export function buildSamples(coords, plz, { stepKm = 25, radius = 30 } = {}) {
   if (!RADIUS_STEPS.includes(radius)) throw new Error(`radius must be one of ${RADIUS_STEPS}`);
   const seen = new Set();
   const out = [];
   for (const p of samplePoints(coords, stepKm)) {
-    const n = nearestPlz(p.lat, p.lon);
+    const n = plz.nearest(p.lat, p.lon);
     if (!n || seen.has(n.plz)) continue;
     seen.add(n.plz);
     out.push({ plz: n.plz, lat: n.lat, lon: n.lon, radius, km: p.km });
@@ -75,11 +75,11 @@ export function radiusStepFor(km) {
  * smallest Kleinanzeigen radius step >= radiusKm.
  * @param {{lat:number,lon:number,label?:string,radiusKm:number}[]} stops
  */
-export function buildStopSamples(stops) {
+export function buildStopSamples(stops, plz) {
   const out = [];
   for (const s of stops) {
     if (!(s.radiusKm > 0)) continue;
-    const n = nearestPlz(s.lat, s.lon);
+    const n = plz.nearest(s.lat, s.lon);
     if (n) out.push({ plz: n.plz, lat: n.lat, lon: n.lon, radius: radiusStepFor(s.radiusKm) });
   }
   return out;

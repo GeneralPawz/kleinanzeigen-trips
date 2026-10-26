@@ -23,13 +23,20 @@ const STATUS = {
 const ICONS = {
   heart: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>',
   chat: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 2H4a2 2 0 0 0-2 2v18l4-4h14a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2z"/></svg>',
+  ext: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3h7v7M21 3l-9 9M19 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5"/></svg>',
 };
+const THEME_KEY = 'troedeltour.theme';
+const MODE_KEY = 'troedeltour.mode.'; // + routeId: fallback while the server store does not keep searchMode
+const APP_VERSION = '2.1.0';
+// Backend (search.js/store.js) rejects corridorKm <= 0; in radius mode a hairline corridor keeps only stop hits.
+const RADIUS_MODE_CORRIDOR_KM = 0;
+const PHONE_MQ = window.matchMedia('(max-width: 799px)');
 
 let uid = 0;
 const nextId = () => `n${++uid}`;
 
-/** @type {{stops: {id:string,text:string,point:{lat:number,lon:number}|null,radiusKm:number}[], items: {id:string,query:string,minPrice:string,maxPrice:string}[], corridor:number, route: any, routeId: string|null, routeName: string, nameAuto: boolean, searchedAt: string|null}} */
-const state = { stops: [], items: [], corridor: 20, route: null, routeId: null, routeName: '', nameAuto: true, searchedAt: null };
+/** @type {{stops: {id:string,text:string,point:{lat:number,lon:number}|null,radiusKm:number}[], items: {id:string,query:string,minPrice:string,maxPrice:string}[], corridor:number, mode: 'corridor'|'radius', route: any, routeId: string|null, routeName: string, nameAuto: boolean, searchedAt: string|null}} */
+const state = { stops: [], items: [], corridor: 20, mode: 'corridor', route: null, routeId: null, routeName: '', nameAuto: true, searchedAt: null };
 let results = [];
 let resultsById = new Map();
 let shown = [];
@@ -49,8 +56,10 @@ const MAIL_POLL_MS = 60000;
 const unseenOf = (adid) => mailByAd[adid]?.unseen || 0;
 
 // ---------- helpers ----------
+// Every request goes through api(). window.TROEDEL_API_BASE (e.g. 'http://192.168.1.5:3000' in an Android WebView) prefixes '/api/…'; '' = same origin.
+const API_BASE = String(window.TROEDEL_API_BASE || '').replace(/\/+$/, '');
 async function api(path, opts = {}) {
-  const res = await fetch(path, {
+  const res = await fetch(API_BASE + path, {
     ...opts,
     headers: opts.body ? { 'Content-Type': 'application/json' } : undefined,
     body: opts.body ? JSON.stringify(opts.body) : undefined,
@@ -131,6 +140,7 @@ function routePayload() {
     waypoints: state.stops.filter((s) => s.point).map((s) => ({ label: s.text, lat: s.point.lat, lon: s.point.lon, radiusKm: s.radiusKm || 0 })),
     items: state.items.filter((i) => i.query.trim()).map((i) => ({ query: i.query.trim(), minPrice: numOrNull(i.minPrice), maxPrice: numOrNull(i.maxPrice) })),
     corridorKm: state.corridor,
+    searchMode: state.mode,
     geometry: state.route ? state.route.geometry : null,
     distanceKm: state.route ? state.route.distanceKm : null,
     durationMin: state.route ? state.route.durationMin : null,
@@ -151,6 +161,7 @@ async function doSave() {
       state.routeId = r.id;
       localStorage.setItem(LAST_ROUTE_KEY, r.id);
     }
+    localStorage.setItem(MODE_KEY + state.routeId, state.mode);
   } catch (e) {
     dirty = true;
     toast(`Route konnte nicht gespeichert werden: ${e.message}`, true);
@@ -196,7 +207,7 @@ function drawStops() {
     const last = i === n - 1;
     const kind = i === 0 ? 'start' : last ? 'end' : 'via';
     const label = i === 0 ? 'S' : last ? 'Z' : String(i);
-    if (s.radiusKm > 0) {
+    if (state.mode === 'radius' && s.radiusKm > 0) {
       L.circle([s.point.lat, s.point.lon], {
         radius: s.radiusKm * 1000, color: '#326916', weight: 2, fillColor: '#B5E941', fillOpacity: 0.18, interactive: false,
       }).addTo(stopLayer);
@@ -247,23 +258,28 @@ function renderStops() {
     const rb = el('button', {
       type: 'button', id: `radius-${stop.id}`, class: `radius-btn${stop.radiusKm ? ' on' : ''}`,
       'aria-label': `${role}: Suchumkreis ${stop.radiusKm ? `${stop.radiusKm} km` : 'aus'} – klicken zum Ändern`,
-      title: 'Suchumkreis um diesen Ort (aus, 5, 10, 20, 30, 50 km)', onclick: () => cycleRadius(stop),
+      'aria-disabled': state.mode === 'corridor' ? 'true' : null,
+      title: state.mode === 'corridor' ? 'Nur im Modus „Um Orte“ verfügbar' : 'Suchumkreis um diesen Ort (aus, 5, 10, 20, 30, 50 km)', onclick: () => cycleRadius(stop),
     }, `◎ ${radiusText(stop.radiusKm)}`);
-    const up = el('button', { type: 'button', class: 'icon-btn', 'aria-label': `${role} nach oben`, title: 'Nach oben', text: '↑', disabled: i === 0, onclick: () => moveStop(i, -1) });
-    const down = el('button', { type: 'button', class: 'icon-btn', 'aria-label': `${role} nach unten`, title: 'Nach unten', text: '↓', disabled: i === n - 1, onclick: () => moveStop(i, 1) });
+    const handle = el('button', { type: 'button', class: 'drag-handle', 'aria-hidden': 'true', tabindex: '-1', title: 'Ziehen zum Sortieren', text: '⋮⋮' });
+    handle.addEventListener('pointerdown', (e) => startDrag(e, handle, i));
+    const up = el('button', { type: 'button', class: 'icon-btn up', 'aria-label': `${role} nach oben`, title: 'Nach oben', text: '↑', disabled: i === 0, onclick: () => moveStop(i, -1) });
+    const down = el('button', { type: 'button', class: 'icon-btn down', 'aria-label': `${role} nach unten`, title: 'Nach unten', text: '↓', disabled: i === n - 1, onclick: () => moveStop(i, 1) });
     const rm = el('button', { type: 'button', class: 'icon-btn', 'aria-label': `${role} entfernen`, title: 'Entfernen', text: '×', disabled: n <= 2, onclick: () => removeStop(i) });
     list.append(el('li', { class: 'stop' },
       el('label', { for: inputId, text: role }),
-      el('div', { class: 'stop-line' }, el('div', { class: 'field' }, input, sug), rb, up, down, rm)));
+      el('div', { class: 'stop-line' }, handle, el('div', { class: 'field' }, input, sug), rb, up, down, rm)));
   });
   $('add-stop').disabled = n >= MAX_STOPS;
   drawStops();
 }
 
 function cycleRadius(stop) {
+  if (state.mode !== 'radius') { toast('Der Radius je Stopp gilt nur im Modus „Um Orte“. Wechsle den Suchmodus oben bei „Suche“.'); return; }
   stop.radiusKm = RADII[(RADII.indexOf(stop.radiusKm) + 1) % RADII.length];
   renderStops();
   $(`radius-${stop.id}`)?.focus();
+  showMsg($('mode-error'), '');
   persist();
 }
 function moveStop(i, d) {
@@ -271,12 +287,64 @@ function moveStop(i, d) {
   if (j < 0 || j >= state.stops.length) return;
   [state.stops[i], state.stops[j]] = [state.stops[j], state.stops[i]];
   renderStops();
+  staleHint();
   persist();
+  $('stops').children[j]?.querySelector(d < 0 ? '.up' : '.down')?.focus();
+}
+/** The saved route line no longer matches the order of the stops. */
+function staleHint() {
+  if (state.route) $('route-info').textContent = `${$('route-info').textContent.split(' – Reihenfolge')[0]} – Reihenfolge geändert, bitte „Route berechnen“ klicken`;
+}
+
+/** Drag & drop with Pointer Events (touch + mouse): the handle follows the pointer, other stops slide aside. */
+function startDrag(e, handle, from) {
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  e.preventDefault();
+  const items = [...$('stops').children];
+  if (items.length < 2) return;
+  const rects = items.map((n) => n.getBoundingClientRect());
+  const slot = rects[1].top - rects[0].top;
+  const li = items[from];
+  const startY = e.clientY;
+  let target = from;
+  handle.setPointerCapture(e.pointerId);
+  li.classList.add('dragging');
+  document.body.classList.add('dragging-stop');
+  items.forEach((n, j) => { if (j !== from) n.classList.add('shifting'); });
+  const onMove = (ev) => {
+    const dy = ev.clientY - startY;
+    li.style.transform = `translateY(${dy}px)`;
+    const mid = rects[from].top + dy + rects[from].height / 2;
+    target = rects.reduce((n, r, j) => n + (j !== from && r.top + r.height / 2 < mid ? 1 : 0), 0);
+    items.forEach((n, j) => {
+      if (j === from) return;
+      const shift = from < target && j > from && j <= target ? -slot : from > target && j < from && j >= target ? slot : 0;
+      n.style.transform = shift ? `translateY(${shift}px)` : '';
+    });
+  };
+  const finish = (ev) => {
+    handle.removeEventListener('pointermove', onMove);
+    handle.removeEventListener('pointerup', finish);
+    handle.removeEventListener('pointercancel', finish);
+    document.body.classList.remove('dragging-stop');
+    items.forEach((n) => { n.classList.remove('dragging', 'shifting'); n.style.transform = ''; });
+    if (ev.type === 'pointerup' && target !== from) {
+      const [moved] = state.stops.splice(from, 1);
+      state.stops.splice(target, 0, moved);
+      renderStops();
+      staleHint();
+      persist();
+    }
+  };
+  handle.addEventListener('pointermove', onMove);
+  handle.addEventListener('pointerup', finish);
+  handle.addEventListener('pointercancel', finish);
 }
 function removeStop(i) {
   if (state.stops.length <= 2) return;
   state.stops.splice(i, 1);
   renderStops();
+  staleHint();
   persist();
 }
 
@@ -407,9 +475,17 @@ async function startSearch() {
       return o;
     });
   if (!items.length) { showMsg(err, 'Bitte mindestens einen Suchbegriff eingeben.'); return; }
-  const stops = state.stops
-    .filter((s) => s.point && s.radiusKm > 0)
-    .map((s) => ({ label: shortLabel(s.text), lat: s.point.lat, lon: s.point.lon, radiusKm: s.radiusKm }));
+  const radiusMode = state.mode === 'radius';
+  const stops = radiusMode
+    ? state.stops
+      .filter((s) => s.point && s.radiusKm > 0)
+      .map((s) => ({ label: shortLabel(s.text), lat: s.point.lat, lon: s.point.lon, radiusKm: s.radiusKm }))
+    : [];
+  showMsg($('mode-error'), '');
+  if (radiusMode && !stops.length) {
+    showMsg($('mode-error'), 'Bitte bei mindestens einem Stopp einen Radius wählen (◎) – oder wechsle auf „Entlang der Route“.');
+    return;
+  }
   clearResults();
   state.searchedAt = null;
   const token = searchToken;
@@ -420,8 +496,8 @@ async function startSearch() {
   $('progress').removeAttribute('value');
   $('progress-text').textContent = 'Suche wird gestartet…';
   try {
-    const body = { geometry: state.route.geometry, corridorKm: state.corridor, items };
-    if (stops.length) body.stops = stops;
+    const body = { geometry: state.route.geometry, corridorKm: radiusMode ? RADIUS_MODE_CORRIDOR_KM : state.corridor, items };
+    if (radiusMode) body.stops = stops;
     const { jobId } = await api('/api/search', { method: 'POST', body });
     if (token !== searchToken) return;
     poll(jobId, token);
@@ -434,7 +510,36 @@ async function startSearch() {
 function finishSearch() {
   const btn = $('search');
   btn.disabled = false;
-  btn.textContent = 'Entlang der Route suchen';
+  btn.textContent = state.mode === 'radius' ? 'Um die Orte suchen' : 'Entlang der Route suchen';
+}
+
+// ---------- search mode (corridor XOR radius per stop) ----------
+function applyMode({ redraw = true } = {}) {
+  const radius = state.mode === 'radius';
+  for (const b of document.querySelectorAll('#mode-seg button')) b.setAttribute('aria-pressed', String(b.dataset.mode === state.mode));
+  $('corridor').disabled = radius;
+  $('corridor-box').classList.toggle('is-off', radius);
+  for (const b of document.querySelectorAll('.radius-btn')) {
+    if (radius) b.removeAttribute('aria-disabled'); else b.setAttribute('aria-disabled', 'true');
+    b.title = radius ? 'Suchumkreis um diesen Ort (aus, 5, 10, 20, 30, 50 km)' : 'Nur im Modus „Um Orte“ verfügbar';
+  }
+  $('mode-hint').textContent = radius
+    ? 'Gesucht wird nur im Umkreis der Stopps, bei denen du einen Radius (◎) gesetzt hast – nicht entlang der ganzen Route.'
+    : 'Gesucht wird links und rechts der gesamten Route. Die Radien bei den Stopps sind in diesem Modus aus.';
+  showMsg($('mode-error'), '');
+  if (!$('search').disabled) finishSearch();
+  if (redraw) drawStops();
+}
+function setMode(mode) {
+  if (state.mode === mode) return;
+  state.mode = mode;
+  applyMode();
+  persist();
+}
+function initialMode(r) {
+  if (r.searchMode === 'corridor' || r.searchMode === 'radius') return r.searchMode;
+  const kept = r.id ? localStorage.getItem(MODE_KEY + r.id) : null;
+  return kept === 'radius' ? 'radius' : 'corridor';
 }
 
 async function poll(jobId, token) {
@@ -494,7 +599,7 @@ function renderResults() {
   const list = $('results');
   list.replaceChildren();
   if (!shown.length) {
-    list.append(el('li', { class: 'empty-note', text: searchStatus === 'running' ? 'Noch keine Treffer …' : 'Keine Anzeigen im Korridor gefunden.' }));
+    list.append(el('li', { class: 'empty-note', text: searchStatus === 'running' ? 'Noch keine Treffer …' : (state.mode === 'radius' ? 'Keine Anzeigen im Umkreis der Stopps gefunden.' : 'Keine Anzeigen im Korridor gefunden.') }));
   }
   for (const r of shown) list.append(card(r));
   drawAdMarkers();
@@ -601,7 +706,7 @@ function highlight(adid, on) {
   if (c && !on) c.classList.remove('hl');
 }
 
-const bubbleWidth = () => (window.innerWidth < 800 ? 196 : 224);
+const bubbleWidth = () => (window.innerWidth < 800 ? 214 : 236);
 const bubbleMode = () => map.getZoom() >= BUBBLE_ZOOM;
 
 function dotIcon(r) {
@@ -612,14 +717,16 @@ function dotIcon(r) {
   return L.divIcon({ className: '', html: dot, iconSize: [22, 22], iconAnchor: [11, 11] });
 }
 
-const BUBBLE_H = 62, LIFT = 70;
+const BUBBLE_H = 70, LIFT = 78;
 const placement = new Map(); // adid -> { dx, lift } (bubble offset so overlapping bubbles stay readable)
 
 function bubbleIcon(r) {
   const remembered = merk.has(r.adid);
   const w = bubbleWidth();
   const { dx = 0, lift = 0 } = placement.get(r.adid) || {};
-  const btns = el('div', { class: 'b-btns' }, heartBtn(r.adid), chatChip(r.adid));
+  const link = safeUrl(r.url);
+  const btns = el('div', { class: 'b-btns' }, heartBtn(r.adid), chatChip(r.adid),
+    link ? el('a', { class: 'ka-btn', href: link, target: '_blank', rel: 'noopener noreferrer', title: 'Auf Kleinanzeigen öffnen', 'aria-label': `Auf Kleinanzeigen öffnen: ${r.title}` }, icon('ext')) : null);
   L.DomEvent.disableClickPropagation(btns);
   const box = el('div', { class: `bubble${remembered ? ' remembered' : ''}${r.adid === selectedAdid ? ' sel' : ''}` },
     thumbNode(r, 'b-thumb'),
@@ -711,6 +818,7 @@ function selectAd(adid, { fly = true } = {}) {
   if (filterQuery && r.query !== filterQuery) { filterQuery = null; renderResults(); }
   applySelection();
   const m = markers.get(adid);
+  if (PHONE_MQ.matches) showPane(1);
   if (m && fly) map.flyTo(m.getLatLng(), 14, { duration: 0.8 });
 }
 
@@ -893,11 +1001,11 @@ let confirmingId = null;
 
 function setTab(tab) {
   currentTab = tab;
-  for (const t of ['routes', 'merk']) {
+  for (const t of ['routes', 'merk', 'settings']) {
     $(`tab-${t}`).setAttribute('aria-selected', String(t === tab));
     $(`panel-${t}`).hidden = t !== tab;
   }
-  if (tab === 'routes') renderRoutes(); else renderMerk();
+  if (tab === 'routes') renderRoutes(); else if (tab === 'merk') renderMerk(); else renderSettings();
 }
 
 async function openNav(tab) {
@@ -1112,6 +1220,7 @@ function applyRoute(r) {
   state.items = (r.items || []).map((i) => ({ id: nextId(), query: i.query, minPrice: i.minPrice ?? '', maxPrice: i.maxPrice ?? '' }));
   if (!state.items.length) state.items = [blankItem()];
   state.corridor = Math.min(50, Math.max(5, Math.round(r.corridorKm || 20)));
+  state.mode = initialMode(r);
   state.route = r.geometry && r.geometry.coordinates ? { geometry: r.geometry, distanceKm: r.distanceKm, durationMin: r.durationMin } : null;
   state.searchedAt = r.searchedAt || null;
   setResults(r.results);
@@ -1134,6 +1243,7 @@ function applyRoute(r) {
     $('progress-text').textContent = `Gespeicherte Ergebnisse vom ${fmtDate(state.searchedAt)} – ${results.length} Anzeigen.`;
   }
   renderStops();
+  applyMode({ redraw: false });
   renderItems();
   drawRoute(true);
   renderResults();
@@ -1170,6 +1280,72 @@ async function migrateOld() {
   } catch { return null; /* keep the old data and retry on next start */ }
 }
 
+// ---------- settings: theme, version, updates ----------
+const themeMQ = window.matchMedia('(prefers-color-scheme: dark)');
+const themePref = () => localStorage.getItem(THEME_KEY) || 'system';
+
+function applyTheme() {
+  const pref = themePref();
+  const dark = pref === 'dark' || (pref === 'system' && themeMQ.matches);
+  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  document.querySelector('meta[name=theme-color]')?.setAttribute('content', dark ? '#0b1a05' : '#1D4B00');
+  for (const b of document.querySelectorAll('#theme-seg button')) b.setAttribute('aria-pressed', String(b.dataset.themePref === pref));
+}
+
+function initTheme() {
+  for (const b of document.querySelectorAll('#theme-seg button')) {
+    b.addEventListener('click', () => {
+      if (b.dataset.themePref === 'system') localStorage.removeItem(THEME_KEY); else localStorage.setItem(THEME_KEY, b.dataset.themePref);
+      applyTheme();
+    });
+  }
+  themeMQ.addEventListener('change', applyTheme);
+  $('check-update').addEventListener('click', async () => {
+    const btn = $('check-update');
+    btn.disabled = true;
+    try {
+      const res = await window.TroedelApp.checkForUpdates();
+      $('update-note').textContent = typeof res === 'string' ? res : 'Suche nach Updates gestartet.';
+    } catch (e) { $('update-note').textContent = `Update-Suche fehlgeschlagen: ${e.message}`; }
+    btn.disabled = false;
+  });
+  applyTheme();
+}
+
+function renderSettings() {
+  applyTheme();
+  const native = window.TroedelApp;
+  $('app-version').textContent = `App-Version: ${native?.version || APP_VERSION}${native ? ' (Android)' : ' (Browser)'}`;
+  const can = typeof native?.checkForUpdates === 'function';
+  $('check-update').hidden = !can;
+  $('update-note').textContent = can ? '' : 'Nach Updates suchen: nur in der Android-App.';
+}
+
+// ---------- phone: Planung | Karte panes ----------
+const panesEl = $('panes');
+const paneIndex = () => (panesEl.scrollLeft > panesEl.clientWidth / 2 ? 1 : 0);
+
+function syncTabs() {
+  const max = panesEl.scrollWidth - panesEl.clientWidth;
+  const p = max > 0 ? Math.min(1, Math.max(0, panesEl.scrollLeft / max)) : 0;
+  $('tabbar').style.setProperty('--p', p.toFixed(3));
+  const idx = p > 0.5 ? 1 : 0;
+  for (const b of $('tabbar').querySelectorAll('[role=tab]')) b.setAttribute('aria-selected', String(+b.dataset.pane === idx));
+}
+
+function showPane(i, smooth = true) {
+  panesEl.scrollTo({ left: i * panesEl.clientWidth, behavior: smooth ? 'smooth' : 'auto' });
+}
+
+function initPanes() {
+  panesEl.addEventListener('scroll', () => requestAnimationFrame(syncTabs), { passive: true });
+  for (const b of $('tabbar').querySelectorAll('[role=tab]')) b.addEventListener('click', () => showPane(+b.dataset.pane));
+  const place = () => { map.zoomControl.setPosition(PHONE_MQ.matches ? 'topright' : 'topleft'); map.invalidateSize(); syncTabs(); };
+  PHONE_MQ.addEventListener('change', place);
+  window.addEventListener('resize', syncTabs);
+  place();
+}
+
 // ---------- init ----------
 async function init() {
   const savedLastId = localStorage.getItem(LAST_ROUTE_KEY);
@@ -1196,6 +1372,11 @@ async function init() {
   $('search').addEventListener('click', startSearch);
   $('route-name').addEventListener('input', (e) => { state.routeName = e.target.value; state.nameAuto = false; persist(); });
   $('brand-btn').addEventListener('click', () => openNav('routes'));
+  $('open-settings').addEventListener('click', () => openNav('settings'));
+  $('tab-settings').addEventListener('click', () => setTab('settings'));
+  for (const b of document.querySelectorAll('#mode-seg button')) b.addEventListener('click', () => setMode(b.dataset.mode));
+  initTheme();
+  initPanes();
   $('open-merk').addEventListener('click', () => openNav('merk'));
   $('nav-close').addEventListener('click', () => closeOverlay());
   $('contact-close').addEventListener('click', () => closeOverlay());

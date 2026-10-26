@@ -1,6 +1,7 @@
-import { load } from 'cheerio';
+import { parse } from 'node-html-parser';
 
 const BASE = 'https://www.kleinanzeigen.de';
+const clean = (s) => s.replace(/\s+/g, ' ').trim();
 
 /** @param {string} text */
 export function parsePrice(text) {
@@ -12,27 +13,26 @@ export function parsePrice(text) {
 }
 
 /**
- * Parse a Kleinanzeigen search-result page. Anchors on article[data-adid], data-href,
- * h3 and span text — the Tailwind class names are unstable.
+ * Parse a Kleinanzeigen search-result page (node-html-parser: pure JS, runs in Node and WebViews).
+ * Anchors on article[data-adid], data-href, h3 and span text — the Tailwind class names are unstable.
  * @param {string} html
  * @returns {{adid:string,title:string,priceText:string,price:number|null,vb:boolean,url:string,
  *   image:string|null,plz:string|null,city:string|null,date:string|null}[]}
  */
 export function parseSearch(html) {
-  const $ = load(html);
+  const root = parse(html);
   const items = [];
-  $('article[data-adid]').each((_, el) => {
-    const a = $(el);
-    const adid = a.attr('data-adid');
-    const href = a.attr('data-href') || a.find('h3 a').attr('href');
-    const title = a.find('h3').first().text().replace(/\s+/g, ' ').trim();
-    if (!adid || !href || !title) return;
+  for (const a of root.querySelectorAll('article[data-adid]')) {
+    const adid = a.getAttribute('data-adid');
+    const href = a.getAttribute('data-href') || a.querySelector('h3 a')?.getAttribute('href');
+    const title = clean(a.querySelector('h3')?.text ?? '');
+    if (!adid || !href || !title) continue;
 
     let plz = null;
     let city = null;
     let date = null;
-    a.find('span').each((__, s) => {
-      const t = $(s).text().trim();
+    for (const s of a.querySelectorAll('span')) {
+      const t = s.text.trim();
       const m = t.match(/^(\d{5})\s+(.+)$/);
       if (m && !plz) {
         plz = m[1];
@@ -40,18 +40,19 @@ export function parseSearch(html) {
       } else if (!date && /^(Heute|Gestern)\b|^\d{2}\.\d{2}\.\d{4}$/.test(t)) {
         date = t;
       }
-    });
+    }
 
     const priceText =
       a
-        .find('p')
-        .map((__, p) => $(p).text().replace(/\s+/g, ' ').trim())
-        .get()
+        .querySelectorAll('p')
+        .map((p) => clean(p.text))
         .find((t) => /€|zu verschenken/i.test(t) && t.length < 40) || '';
     const { price, vb } = parsePrice(priceText);
 
     const image =
-      a.find('[data-image-container] img').attr('src') || a.find('img').attr('src') || null;
+      a.querySelector('[data-image-container] img')?.getAttribute('src') ||
+      a.querySelector('img')?.getAttribute('src') ||
+      null;
 
     items.push({
       adid,
@@ -65,7 +66,7 @@ export function parseSearch(html) {
       city,
       date,
     });
-  });
+  }
   return items;
 }
 

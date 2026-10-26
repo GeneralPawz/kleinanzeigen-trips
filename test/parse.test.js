@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { parseSearch, parsePrice } from '../server/kleinanzeigen/parse.js';
+import { parseSearch, parsePrice } from '../core/parse.js';
 
 const html = readFileSync(new URL('./fixtures/search.html', import.meta.url), 'utf8');
 const items = parseSearch(html);

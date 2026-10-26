@@ -1,0 +1,132 @@
+/* Trödeltour v3: mode toggle, drag handle, settings, dark map, phone panes (loaded after panels.css) */
+.gear-btn { width: 36px; height: 36px; border-radius: 50%; border: 0; background: none; color: var(--lime); cursor: pointer; display: grid; place-items: center; padding: 0; }
+.gear-btn:hover { background: rgba(255,255,255,.15); color: #fff; }
+.gear-btn svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+/* segmented toggle (search mode, theme) */
+.seg { display: flex; border: 1px solid var(--field-border); border-radius: 999px; overflow: hidden; background: var(--surface); }
+.seg button { flex: 1; border: 0; background: none; padding: 7px 10px; min-height: 36px; font-size: 13px; font-weight: 700; line-height: 1.2; color: var(--muted); cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--field-border); }
+.seg button:hover { background: var(--lime-tint); }
+.seg button[aria-pressed=true] { background: var(--green); color: #fff; }
+.seg :focus-visible { outline-offset: -3px; }
+.mode-box { margin-bottom: 12px; }
+.mode-box .small-note { margin: 8px 0 0; }
+.mode-box .error { margin: 6px 0 0; font-weight: 700; }
+.corridor { transition: opacity .15s; }
+.corridor.is-off { opacity: .45; }
+.corridor.is-off label { cursor: not-allowed; }
+.radius-btn[aria-disabled=true] { opacity: .4; cursor: not-allowed; background: var(--surface); border-style: dashed; }
+.radius-btn[aria-disabled=true]:hover { background: var(--surface); }
+
+/* drag handle for stops */
+.drag-handle {
+  flex: none; width: 24px; height: 30px; border: 0; background: none; color: var(--muted); cursor: grab; padding: 0; font-size: 18px; font-weight: 700;
+  letter-spacing: -3px; line-height: 1; touch-action: none; user-select: none; -webkit-user-select: none; display: grid; place-items: center;
+}
+.drag-handle:hover { color: var(--link); }
+.stop.dragging { z-index: 30; box-shadow: 0 6px 18px rgba(0,0,0,.3); background: var(--bg); border-radius: 10px; cursor: grabbing; }
+.stop.dragging .drag-handle { cursor: grabbing; }
+.stop.shifting { transition: transform .15s ease; }
+body.dragging-stop { user-select: none; -webkit-user-select: none; cursor: grabbing; }
+
+/* Kleinanzeigen jump button in bubbles */
+.ka-btn {
+  width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--border); background: var(--surface); color: var(--muted);
+  cursor: pointer; padding: 0; display: inline-grid; place-items: center; flex: none; text-decoration: none;
+}
+.ka-btn svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.ka-btn:hover { background: var(--lime-tint); color: var(--link); }
+
+/* settings */
+.set-group { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; margin-bottom: 12px; }
+.set-group h3 { margin: 0 0 8px; font-size: 14px; color: var(--head-text); }
+.set-group p { margin: 8px 0 0; font-size: 13px; color: var(--muted); }
+.set-group .btn { margin-top: 8px; }
+.set-group .mail-section { margin: 0; padding: 0; border: 0; }
+.set-group .mail-section .group-title { display: none; }
+.set-group .mail-unmatched li { background: var(--bg); }
+
+/* dark mode: map tiles only (markers, route and circles keep their colours) */
+html[data-theme=dark] .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(.9) contrast(.9); }
+html[data-theme=dark] .leaflet-container { background: #0c120d; }
+html[data-theme=dark] .leaflet-bar a, html[data-theme=dark] .leaflet-bar a:hover { background: var(--surface); color: var(--text); border-bottom-color: var(--border); }
+html[data-theme=dark] .leaflet-control-attribution { background: rgba(15, 22, 16, .8); color: var(--muted); }
+html[data-theme=dark] .leaflet-control-attribution a { color: var(--link); }
+html[data-theme=dark] .leaflet-tooltip { background: var(--surface); color: var(--text); border-color: var(--border); }
+html[data-theme=dark] .backdrop { background: rgba(0,0,0,.6); }
+html[data-theme=dark] .bubble { color: var(--text); }
+html[data-theme=dark] .bubble .heart-btn, html[data-theme=dark] .bubble .chat-chip:not([data-status]:not([data-status=none])) { background: var(--bg); }
+
+/* contain Leaflet's z-indexes; phone-only chrome hidden on desktop */
+.map-wrap { isolation: isolate; }
+.edge-swipe, .tabbar { display: none; }
+
+/* ---------- phone: two panes (Planung | Karte) side by side, swipe horizontally ---------- */
+@media (max-width: 799px) {
+  .topbar { gap: 6px; padding-left: calc(10px + var(--sal)); padding-right: calc(10px + var(--sar)); }
+  .brand-title, .top-actions .ext { display: none; }
+  .brand-btn { min-width: 44px; min-height: 44px; padding: 0; justify-content: center; }
+  .brand-mark { width: 34px; height: 34px; }
+  .top-actions { gap: 2px; }
+  .account { font-size: 14px; min-height: 44px; padding: 4px 8px; }
+  .gear-btn { width: 44px; height: 44px; }
+  .route-name-wrap input { padding: 8px 10px; }
+  input, select, textarea, input[type=text], input[type=number] { font-size: 16px; }
+
+  .layout { display: flex; flex-direction: column; }
+  .panes {
+    display: flex; flex: 1; min-height: 0; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; overscroll-behavior-x: contain;
+    scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  }
+  .panes::-webkit-scrollbar { display: none; }
+  .panel, .map-wrap { flex: 0 0 100vw; width: 100vw; max-width: 100%; scroll-snap-align: start; scroll-snap-stop: always; height: auto; order: 0; }
+  .panel { border-right: 0; padding: 12px calc(12px + var(--sar)) 16px calc(12px + var(--sal)); overscroll-behavior-y: contain; }
+  #map { touch-action: none; }
+  .edge-swipe { display: block; position: absolute; left: 0; top: 0; bottom: 0; width: 24px; z-index: 900; touch-action: pan-x; }
+  .leaflet-top.leaflet-right .leaflet-control { margin-right: calc(10px + var(--sar)); }
+
+  .tabbar {
+    display: flex; position: relative; flex: none; background: var(--surface); border-top: 1px solid var(--border);
+    padding-bottom: var(--sab); z-index: 1100;
+  }
+  .tabbar button { flex: 1; min-height: 48px; border: 0; background: none; font-weight: 700; font-size: 15px; color: var(--muted); cursor: pointer; }
+  .tabbar button[aria-selected=true] { color: var(--head-text); }
+  .tab-ind {
+    position: absolute; left: 0; top: -1px; width: 50%; height: 3px; background: var(--green); border-radius: 0 0 3px 3px;
+    transform: translateX(calc(var(--p, 0) * 100%)); pointer-events: none;
+  }
+  html[data-theme=dark] .tab-ind { background: var(--link); }
+
+  /* 44px touch targets */
+  .btn, .chip { min-height: 44px; }
+  .btn-small { min-height: 44px; padding: 6px 14px; }
+  .icon-btn, .notes .icon-btn { width: 44px; height: 44px; }
+  .radius-btn { height: 44px; padding: 0 14px; font-size: 13px; }
+  .drag-handle { width: 40px; height: 44px; font-size: 22px; }
+  .listing .heart-btn, .listing .chat-chip, .merk-item .heart-btn, .merk-item .chat-chip, .c-summary .heart-btn { width: 44px; height: 44px; min-width: 44px; }
+  .listing .actions a { display: inline-flex; align-items: center; min-height: 44px; }
+  .listing .heart-btn svg, .listing .chat-chip svg { width: 20px; height: 20px; }
+  .tabs button { min-height: 48px; font-size: 15px; }
+  .seg button { min-height: 44px; font-size: 14px; }
+  .route-open { min-height: 44px; }
+  input[type=range] { min-height: 44px; touch-action: pan-y; }
+  input[type=text], input[type=number] { min-height: 44px; }
+  .item { grid-template-columns: 1fr 72px 72px 44px; }
+  .item .remove { margin-bottom: 0; }
+  .stop-line { flex-wrap: wrap; row-gap: 4px; }
+  .stop-line .field { flex: 1 1 calc(100% - 48px); }
+  .stop-line .radius-btn { margin-left: 44px; }
+  .stop-line .up { margin-left: auto; }
+  /* map bubbles: as large as the bubble allows */
+  .bubble .heart-btn, .bubble .chat-chip, .bubble .ka-btn { width: 30px; height: 30px; min-width: 30px; }
+  .b-btns { grid-template-columns: repeat(2, 30px); }
+
+  /* bottom-sheet drawers */
+  .drawer { top: auto; left: 0; right: 0; bottom: 0; width: 100%; height: min(88dvh, calc(100dvh - 24px - var(--sat))); border-radius: 18px 18px 0 0; overflow: hidden; }
+  .drawer-left, .drawer-right { transform: translateY(104%); }
+  .drawer.open { transform: none; }
+  .drawer-head { padding: 12px calc(14px + var(--sar)) 12px calc(14px + var(--sal)); }
+  .drawer-body { padding: 12px calc(12px + var(--sar)) calc(16px + var(--sab)) calc(12px + var(--sal)); overscroll-behavior: contain; }
+  .toast { bottom: calc(76px + var(--sab)); }
+}

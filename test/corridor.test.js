@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { setTable } from '../server/plz.js';
-import { haversineKm } from '../server/geo.js';
-import { samplePoints, distanceToRoute, buildSamples, cumulativeKm } from '../server/corridor.js';
+import { createPlz } from '../core/plz.js';
+import { haversineKm } from '../core/geo.js';
+import { samplePoints, distanceToRoute, buildSamples, cumulativeKm } from '../core/corridor.js';
 
 // Straight line along lon=10 from lat 50 to 52 (~222 km)
 const line = [
@@ -36,15 +36,15 @@ test('distanceToRoute and kmAlong', () => {
 });
 
 test('buildSamples dedupes by PLZ and uses radius 30', () => {
-  setTable({
+  const plz = createPlz({
     plz: { 11111: [50, 10], 22222: [51, 10], 33333: [52, 10] },
     cities: {},
   });
-  const s = buildSamples(line, { stepKm: 25 });
+  const s = buildSamples(line, plz, { stepKm: 25 });
   assert.deepEqual(
     s.map((x) => x.plz),
     ['11111', '22222', '33333'],
   );
   assert.ok(s.every((x) => x.radius === 30));
-  assert.throws(() => buildSamples(line, { radius: 15 }));
+  assert.throws(() => buildSamples(line, plz, { radius: 15 }));
 });
