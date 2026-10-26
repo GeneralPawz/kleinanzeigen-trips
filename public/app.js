@@ -395,7 +395,7 @@ function card(r) {
       el('h3', { text: r.title }),
       price,
       el('div', { class: 'meta', text: `${[r.plz, r.city].filter(Boolean).join(' ')}` }),
-      el('div', { class: 'meta', text: `km ${Math.round(r.kmAlongRoute)} der Route · ${fmtKm(r.distanceToRouteKm)} km von der Route` }),
+      el('div', { class: 'meta', text: `km ${Math.round(r.kmAlongRoute)} der Route · ${fmtKm(r.distanceToRouteKm)} km abseits` }),
       r.date ? el('div', { class: 'meta', text: r.date }) : null,
       actions));
   li.addEventListener('mouseenter', () => highlight(r.adid, true));
