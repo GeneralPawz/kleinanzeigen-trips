@@ -6,3 +6,4 @@ __pycache__/
 dist/
 .sessions/
 data/cache/
+data/user/

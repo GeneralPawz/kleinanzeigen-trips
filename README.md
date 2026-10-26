@@ -35,6 +35,10 @@ Kleinanzeigen-Ergebnisseite (Umkreis 30 km) geholt. Die Treffer werden per lokal
 nach Abstand zur Route gefiltert und nach Position entlang der Route sortiert. Anfragen laufen
 sequenziell mit 1,2–2 s Pause, 15 min Cache und Abbruch bei Captcha/403/429.
 
+Optional kann pro Stopp ein Suchradius (5–50 km) gesetzt werden; Treffer innerhalb davon bleiben auch
+außerhalb des Korridors erhalten (`nearStop`). Routen, die lokale Merkliste und Kontaktnotizen liegen in
+`data/user/store.json` (nicht im Git); Endpunkte siehe `docs/API.md`.
+
 ## Hinweise
 
 - **Nur zur privaten Nutzung.** Die Nutzungsbedingungen von Kleinanzeigen untersagen automatisierten

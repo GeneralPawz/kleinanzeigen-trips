@@ -64,3 +64,34 @@ export function buildSamples(coords, { stepKm = 25, radius = 30 } = {}) {
   }
   return out;
 }
+
+/** Smallest Kleinanzeigen radius step >= km (capped at the largest step). */
+export function radiusStepFor(km) {
+  return RADIUS_STEPS.find((r) => r >= km) ?? RADIUS_STEPS[RADIUS_STEPS.length - 1];
+}
+
+/**
+ * Search samples around stops: the nearest PLZ to each stop with radiusKm > 0, searched with the
+ * smallest Kleinanzeigen radius step >= radiusKm.
+ * @param {{lat:number,lon:number,label?:string,radiusKm:number}[]} stops
+ */
+export function buildStopSamples(stops) {
+  const out = [];
+  for (const s of stops) {
+    if (!(s.radiusKm > 0)) continue;
+    const n = nearestPlz(s.lat, s.lon);
+    if (n) out.push({ plz: n.plz, lat: n.lat, lon: n.lon, radius: radiusStepFor(s.radiusKm) });
+  }
+  return out;
+}
+
+/** Drop samples that repeat the same PLZ + radius (keeps the first). */
+export function dedupeSamples(samples) {
+  const seen = new Set();
+  return samples.filter((s) => {
+    const k = `${s.plz}:${s.radius}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}

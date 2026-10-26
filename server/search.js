@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { buildSamples, distanceToRoute, cumulativeKm } from './corridor.js';
+import { buildSamples, buildStopSamples, dedupeSamples, distanceToRoute, cumulativeKm } from './corridor.js';
+import { haversineKm } from './geo.js';
+import { STOP_RADII } from './store.js';
 import { lookup } from './plz.js';
 import { searchPlz, BlockedError } from './kleinanzeigen/client.js';
 
@@ -18,7 +20,24 @@ export function validateSearch(body) {
   if (!Array.isArray(body.items) || body.items.length === 0) return 'items darf nicht leer sein';
   if (body.items.some((i) => !i || typeof i.query !== 'string' || !i.query.trim())) return 'jedes Item braucht eine query';
   if (!(Number(body.corridorKm) > 0)) return 'corridorKm muss > 0 sein';
+  if (body.stops != null) {
+    if (!Array.isArray(body.stops) || body.stops.length > 10) return 'stops muss ein Array mit höchstens 10 Einträgen sein';
+    for (const s of body.stops) {
+      if (!s || !Number.isFinite(s.lat) || !Number.isFinite(s.lon)) return 'jeder Stopp braucht lat/lon';
+      if (!STOP_RADII.includes(s.radiusKm ?? 0)) return `radiusKm muss einer von ${STOP_RADII.join(', ')} sein`;
+    }
+  }
   return null;
+}
+
+/** Nearest stop whose radius contains the point. */
+export function nearestStop(lat, lon, stops) {
+  let best = null;
+  for (const s of stops) {
+    const d = haversineKm(lat, lon, s.lat, s.lon);
+    if (d <= s.radiusKm && (!best || d < best.distKm)) best = { label: s.label, distKm: d };
+  }
+  return best;
 }
 
 export function startSearch(body, search = searchPlz) {
@@ -29,7 +48,10 @@ export function startSearch(body, search = searchPlz) {
     minPrice: i.minPrice === '' ? null : (i.minPrice ?? null),
     maxPrice: i.maxPrice === '' ? null : (i.maxPrice ?? null),
   }));
-  const samples = buildSamples(coords, { stepKm: sampleKm(), radius: 30 });
+  const stops = (body.stops || [])
+    .map((s, i) => ({ lat: s.lat, lon: s.lon, label: String(s.label || `Stopp ${i + 1}`), radiusKm: s.radiusKm ?? 0 }))
+    .filter((s) => s.radiusKm > 0);
+  const samples = dedupeSamples([...buildSamples(coords, { stepKm: sampleKm(), radius: 30 }), ...buildStopSamples(stops)]);
   const job = {
     id: randomUUID().slice(0, 12),
     status: 'running',
@@ -53,7 +75,8 @@ export function startSearch(body, search = searchPlz) {
             const pos = lookup(r.plz, r.city);
             if (!pos) continue;
             const { distKm, kmAlong } = distanceToRoute(pos[0], pos[1], coords, cum);
-            if (distKm > corridorKm) continue;
+            const stop = nearestStop(pos[0], pos[1], stops);
+            if (distKm > corridorKm && !stop) continue;
             seen.add(r.adid);
             job.results.push({
               ...r,
@@ -62,6 +85,8 @@ export function startSearch(body, search = searchPlz) {
               lon: pos[1],
               distanceToRouteKm: Math.round(distKm * 10) / 10,
               kmAlongRoute: Math.round(kmAlong * 10) / 10,
+              nearStop: stop ? stop.label : null,
+              distanceToStopKm: stop ? Math.round(stop.distKm * 10) / 10 : null,
             });
             job.results.sort((a, b) => a.kmAlongRoute - b.kmAlongRoute);
           }
