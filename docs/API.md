@@ -73,3 +73,18 @@ Validation: `waypoints` ≤ 10, each with finite `lat`/`lon`, `radiusKm` ∈ 0,5
 
 ## Messaging links (no endpoint)
 The user replies in their own, logged-in browser. The frontend links to the ad (`result.url`, new tab) and to the Kleinanzeigen inbox https://www.kleinanzeigen.de/m-nachrichten.html (Merkliste: https://www.kleinanzeigen.de/m-merkliste.html).
+
+## Mail notifications (`server/mail.js`, optional)
+The backend can read the user's **own** mailbox (IMAP, read-only: opened read-only, nothing marked read/moved/deleted) for Kleinanzeigen notification emails and turn them into "new message" badges. It never logs into Kleinanzeigen. Config via `.env`: `MAIL_PROVIDER` (`gmail`|`gmx`|`custom`), `MAIL_USER`, `MAIL_PASS` (app password), `MAIL_HOST`/`MAIL_PORT` (custom only), `MAIL_LOOKBACK_DAYS` (default 30). The server polls every 2 min and on `POST /api/mail/check`. Mails must come from `kleinanzeigen.de` / `ebay-kleinanzeigen.de` (or subdomains). Only metadata is kept (`data/user/mail-index.json`, git-ignored; no bodies). Without config the server starts normally, `configured` is `false`, and notifications are empty. Email format assumptions: `docs/research/mail-notifications.md`.
+
+- `GET /api/mail/status` → `{ "configured": true, "provider": "gmx", "user": "f***@gmx.de", "lastCheck": "2026-10-26T10:00:00.000Z", "error": null }`. Unconfigured: `{ "configured": false, "provider": null, "user": null, "lastCheck": null, "error": null }`. `error` is a short string (password removed) if the last check failed, else `null`; `lastCheck` is `null` until the first success.
+- `POST /api/mail/check` (no body) → waits for one check to finish (concurrent calls share it), returns the status object above. Never errors; failures show in `error`.
+- `GET /api/mail/notifications` →
+```json
+{ "byAd": { "3012345678": { "count": 3, "unseen": 1, "lastAt": "2026-10-25T10:00:00.000Z",
+                            "lastSubject": "Neue Nachricht zu \"Fahrrad\"",
+                            "link": "https://www.kleinanzeigen.de/m-nachrichten.html?...", "match": "adid" } },
+  "unmatched": [{ "subject": "Du hast eine neue Nachricht", "at": "2026-10-25T08:00:00.000Z", "link": null }] }
+```
+  `match` is `"adid"` (an ad id was extracted from the mail; at least one of the ad's mails) or `"title"` (normalized title equals, or strongly overlaps, exactly one ad known to the app: results of saved routes and the Merkliste; ambiguous titles stay unmatched). `link`: conversation link of the latest mail, else the ad link, else `null`. `unseen`: mails newer than the last `seen` call for that ad. `unmatched` is newest first. Only message-type mails are counted (subject with nachricht/anfrage/antwort/geschrieben, or a conversation link). Not configured: `{ "byAd": {}, "unmatched": [] }`.
+- `POST /api/mail/seen/:adid` → `{ "ok": true }`. Resets that ad's `unseen` to 0 (app-side only, stored in `mail-index.json`; the mailbox is untouched). Invalid adid (`[A-Za-z0-9_-]{1,40}`) → 400.

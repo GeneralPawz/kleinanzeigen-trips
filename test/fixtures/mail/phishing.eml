@@ -1,0 +1,9 @@
+From: Kleinanzeigen <support@kleinanzeigen.de.account-verify.example>
+To: user@example.org
+Subject: Ein Interessent hat eine Anfrage zu Ihrer Anzeige
+Date: Sun, 25 Oct 2026 13:00:00 +0100
+Message-ID: <a4@evil.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+https://www.kleinanzeigen.de/s-anzeige/x/1111111111-1-1

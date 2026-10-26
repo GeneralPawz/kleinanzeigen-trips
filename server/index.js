@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url';
 import { geocode } from './geocode.js';
 import { getRoute } from './route.js';
 import { userApi } from './user-api.js';
+import { mailApi } from './mail-api.js';
+import { startMailPolling } from './mail.js';
 import { startSearch, getJob, validateSearch } from './search.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -55,6 +57,7 @@ app.get(
 );
 
 app.use('/api', userApi);
+app.use('/api', mailApi);
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Unbekannter Endpunkt' }));
 app.use((err, _req, res, next) => {
   if (!err.status) return next(err);
@@ -63,4 +66,7 @@ app.use((err, _req, res, next) => {
 app.use(express.static(join(root, 'public')));
 
 const port = Number(process.env.PORT) || 3000;
-app.listen(port, () => console.log(`Trödeltour läuft auf http://localhost:${port}`));
+app.listen(port, () => {
+  console.log(`Trödeltour läuft auf http://localhost:${port}`);
+  startMailPolling();
+});

@@ -19,6 +19,34 @@ CONTACT_EMAIL=du@example.org   # für den Nominatim-User-Agent
 SAMPLE_KM=25             # Abstand der Suchpunkte entlang der Route (Standard 25)
 ```
 
+## Neue Nachrichten per Mail-Postfach (optional)
+
+Kleinanzeigen schickt dir bei neuen Nachrichten eine E-Mail. Die App kann dein Postfach dafür **nur lesend**
+per IMAP prüfen (alle 2 min; nichts wird als gelesen markiert, verschoben oder gelöscht) und zeigt Hinweise
+an den passenden Anzeigen. Gespeichert werden nur Datum, Betreff, Anzeigen-ID/-Titel und Link
+(`data/user/mail-index.json`). Antworten schreibst du weiterhin auf kleinanzeigen.de.
+
+`.env` (Vorlage: `.env.example`):
+
+```
+MAIL_PROVIDER=gmx        # gmail | gmx | custom (dann MAIL_HOST / MAIL_PORT)
+MAIL_USER=du@gmx.de
+MAIL_PASS=app-passwort
+MAIL_LOOKBACK_DAYS=30
+```
+
+**Gmail:** 2-Faktor-Authentifizierung im Google-Konto aktivieren (myaccount.google.com → Sicherheit), dann
+unter https://myaccount.google.com/apppasswords ein App-Passwort erstellen (16 Zeichen, Leerzeichen weglassen)
+und als `MAIL_PASS` eintragen. IMAP ist bei Gmail standardmäßig aktiv.
+
+**GMX:** Im GMX-Postfach unter *Einstellungen → POP3/IMAP Abruf → „IMAP/POP3-Zugriff erlauben“* aktivieren.
+Hast du 2FA eingeschaltet, unter *Einstellungen → Sicherheit* ein Anwendungspasswort anlegen und als
+`MAIL_PASS` nutzen; sonst das normale Passwort.
+
+Parser prüfen: `npm run mail:check` listet die gefundenen Kleinanzeigen-Mails (Datum, Betreff, erkannte
+Anzeigen-ID/Titel, keine Inhalte). Das Mail-Format ist nicht öffentlich dokumentiert, siehe
+`docs/research/mail-notifications.md`.
+
 ## Starten
 
 ```
