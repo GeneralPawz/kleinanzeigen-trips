@@ -8,3 +8,4 @@ dist/
 data/cache/
 data/user/
 www/
+.tmp-play/
