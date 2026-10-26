@@ -9,7 +9,7 @@ import com.getcapacitor.BridgeActivity;
 public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
-        registerPlugin(InstallerPlugin.class);
+        registerPlugin(BarColorPlugin.class);
         super.onCreate(savedInstanceState);
         // Edge-to-edge: the WebView fills the screen under transparent system bars. The single inset mechanism is
         // Capacitor's SystemBars plugin (insetsHandling "css"), which exposes --safe-area-inset-* to the page.

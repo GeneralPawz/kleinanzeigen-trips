@@ -1312,12 +1312,15 @@ function initTheme() {
   $('check-update').addEventListener('click', async () => {
     const btn = $('check-update');
     btn.disabled = true;
+    $('open-store').hidden = true;
     try {
       const res = await window.TroedelApp.checkForUpdates();
-      $('update-note').textContent = typeof res === 'string' ? res : 'Suche nach Updates gestartet.';
+      $('update-note').textContent = res.text;
+      $('open-store').hidden = !res.storeButton;
     } catch (e) { $('update-note').textContent = `Update-Suche fehlgeschlagen: ${e.message}`; }
     btn.disabled = false;
   });
+  $('open-store').addEventListener('click', () => window.TroedelApp?.openStore().catch(() => {}));
   applyTheme();
 }
 
@@ -1327,7 +1330,7 @@ function renderSettings() {
   $('app-version').textContent = `App-Version: ${native?.version || APP_VERSION}${native ? ' (Android)' : ' (Browser)'}`;
   const can = typeof native?.checkForUpdates === 'function';
   $('check-update').hidden = !can;
-  $('update-note').textContent = can ? '' : 'Nach Updates suchen: nur in der Android-App.';
+  $('update-note').textContent = can ? '' : 'Updates: nur in der Android-App (über Google Play).';
 }
 
 // ---------- phone: Planung | Karte panes ----------

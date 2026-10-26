@@ -62,20 +62,23 @@ Die Suche läuft komplett auf dem Handy (kein Server nötig): derselbe `core/` w
 Capacitor (nativ, kein CORS), Routen/Merkliste/Notizen als JSON im App-Speicher. Nur Karten-Kacheln
 brauchen Internet. E-Mail-Hinweise gibt es nur in der Desktop-Version.
 
-**Installieren**
-1. Auf dem Handy die neueste `troedeltour-vX.Y.Z.apk` von der
-   [Releases-Seite](https://github.com/GeneralPawz/kleinanzeigen-trips/releases/latest) laden und öffnen.
-2. Android fragt beim ersten Mal nach „Unbekannte Apps installieren“ für den Browser/Dateimanager – erlauben.
-3. Updates: *Einstellungen → App → Nach Updates suchen*. Die App prüft außerdem einmal täglich beim Start
-   und zeigt ein Banner. „Installieren“ lädt die APK und startet den Android-Installer; beim ersten Update
-   muss die Trödeltour selbst „Unbekannte Apps installieren“ erlaubt bekommen (die App führt dorthin).
-   Alle APKs sind mit demselben Schlüssel signiert, Updates überschreiben die Installation samt Daten.
+**Installieren und aktualisieren:** nur über Google Play (Paket `de.generalpawz.troedeltour`). Updates:
+*Einstellungen → App → Nach Updates suchen* (Play In-App-Update); die App prüft außerdem einmal täglich beim Start
+und zeigt ein Banner. Datenschutz: [PRIVACY.md](PRIVACY.md). Play-Store-Texte, Formularantworten und
+Erst-Upload-Anleitung: `docs/play/`.
 
 **Bauen / Veröffentlichen** (nur in GitHub Actions, `.github/workflows/android.yml`): Version in `package.json`
-erhöhen (`versionName` = Version, `versionCode` = major·10000 + minor·100 + patch), Tag `vX.Y.Z` pushen →
-signierte APK wird als Release-Asset angehängt. Manuell (`workflow_dispatch`) entsteht nur ein Workflow-Artefakt.
-Secrets: `ANDROID_KEYSTORE_BASE64` (PKCS12), `ANDROID_KEYSTORE_PASSWORD` (auch Key-Passwort), `ANDROID_KEY_ALIAS`.
+erhöhen (`versionName` = Version, `versionCode` = major·10000 + minor·100 + patch), annotierten Tag `vX.Y.Z` pushen →
+signiertes Android App Bundle (.aab, Upload-Key) als Workflow-Artefakt; mit Secret `PLAY_SERVICE_ACCOUNT_JSON` wird es
+automatisch in den Play-Track `internal` hochgeladen (Tag-Nachricht = Release Notes). Das GitHub-Release enthält nur
+die Notizen, keine Binärdateien. Manuell (`workflow_dispatch`): AAB, optional (`debug_apk`) eine debug-signierte APK
+zum lokalen Testen. Secrets: `ANDROID_KEYSTORE_BASE64` (PKCS12), `ANDROID_KEYSTORE_PASSWORD` (auch Key-Passwort),
+`ANDROID_KEY_ALIAS`.
 Lokal: `npm run build:app` erzeugt `www/` (Bundle aus `public/`, `core/`, `app/`); `npx cap sync android` übernimmt es.
+
+## Hinweis
+
+Inoffizielles Hilfsmittel. Nicht mit Kleinanzeigen oder Adevinta verbunden.
 
 ## Wie es funktioniert
 

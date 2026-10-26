@@ -1,4 +1,4 @@
-name: Android APK
+name: Android App Bundle
 
 on:
   push:
@@ -61,30 +61,45 @@ jobs:
           echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/troedeltour.p12"
           echo "ANDROID_KEYSTORE_FILE=$RUNNER_TEMP/troedeltour.p12" >> "$GITHUB_ENV"
 
-      - name: Build signed release APK
+      - name: Build signed release bundle (Play upload key)
         working-directory: android
         env:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-        run: sh ./gradlew --no-daemon assembleRelease
+        run: sh ./gradlew --no-daemon bundleRelease
 
-      - name: Name and verify APK
-        id: apk
+      - name: Name and verify AAB
+        id: aab
         run: |
-          src=$(ls android/app/build/outputs/apk/release/*.apk | head -n1)
-          out="troedeltour-v${{ steps.ver.outputs.version }}.apk"
+          src=$(ls android/app/build/outputs/bundle/release/*.aab | head -n1)
+          out="troedeltour-v${{ steps.ver.outputs.version }}.aab"
           cp "$src" "$out"
-          apksigner=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -n1)
-          "$apksigner" verify --verbose --print-certs "$out"
-          aapt2=$(ls "$ANDROID_HOME"/build-tools/*/aapt2 | sort -V | tail -n1)
-          "$aapt2" dump badging "$out" | grep -E "^(package|sdkVersion|targetSdkVersion|uses-permission|application-debuggable)" || true
+          keytool -printcert -jarfile "$out" | grep -E "Owner|SHA256" || { echo "::error::AAB is not signed"; exit 1; }
+          echo "--- merged manifest permissions ---"
+          manifest=$(find android/app/build/intermediates -path '*merged_manifests/release*' -name AndroidManifest.xml | head -n1)
+          echo "$manifest"
+          grep -o 'uses-permission[^>]*android:name="[^"]*"' "$manifest" | sed 's/.*android:name=//' | sort -u
+          if grep -q REQUEST_INSTALL_PACKAGES "$manifest"; then echo "::error::REQUEST_INSTALL_PACKAGES must not be in the manifest"; exit 1; fi
+          grep -o 'android:versionCode="[0-9]*"|android:versionName="[^"]*"' "$manifest" | sort -u
           echo "file=$out" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v4
-        if: github.ref_type != 'tag'
         with:
-          name: ${{ steps.apk.outputs.file }}
-          path: ${{ steps.apk.outputs.file }}
+          name: ${{ steps.aab.outputs.file }}
+          path: ${{ steps.aab.outputs.file }}
+          if-no-files-found: error
+
+      - name: Build debug-signed APK (local testing)
+        if: github.event_name == 'workflow_dispatch' && inputs.debug_apk
+        working-directory: android
+        run: sh ./gradlew --no-daemon assembleDebug
+
+      - name: Upload debug APK
+        if: github.event_name == 'workflow_dispatch' && inputs.debug_apk
+        uses: actions/upload-artifact@v4
+        with:
+          name: troedeltour-debug
+          path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
       - name: Release notes from the tag message
@@ -92,11 +107,30 @@ jobs:
         run: |
           git fetch --force origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
           git tag -l --format='%(contents)' "$GITHUB_REF_NAME" | sed '/-----BEGIN PGP/,$d' > release-notes.md
+          [ -s release-notes.md ] || echo "Trödeltour ${GITHUB_REF_NAME}" > release-notes.md
           cat release-notes.md
+          # Play "What's new": de-DE, at most 500 characters
+          mkdir -p whatsnew
+          head -c 2000 release-notes.md | node -e 'const t=require("fs").readFileSync(0,"utf8").trim();process.stdout.write([...t].slice(0,500).join(""))' > whatsnew/whatsnew-de-DE
 
-      - name: Publish GitHub release
+      - name: Upload to Play (internal track)
+        if: env.HAS_PLAY_KEY == 'true' && (github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && inputs.upload_to_play))
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: de.generalpawz.troedeltour
+          releaseFiles: ${{ steps.aab.outputs.file }}
+          track: internal
+          status: completed
+          whatsNewDirectory: ${{ github.ref_type == 'tag' && 'whatsnew' || '' }}
+
+      - name: Note skipped Play upload
+        if: env.HAS_PLAY_KEY != 'true'
+        run: echo "PLAY_SERVICE_ACCOUNT_JSON not set - skipping Play upload (AAB is available as workflow artifact)."
+
+      # No APK/AAB is attached: distribution is Google Play only.
+      - name: Publish GitHub release (notes only)
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ steps.apk.outputs.file }}
           body_path: release-notes.md
