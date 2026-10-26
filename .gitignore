@@ -7,3 +7,4 @@ dist/
 .sessions/
 data/cache/
 data/user/
+www/

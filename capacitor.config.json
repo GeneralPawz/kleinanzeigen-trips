@@ -1,0 +1,10 @@
+{
+  "appId": "de.generalpawz.troedeltour",
+  "appName": "Trödeltour",
+  "webDir": "www",
+  "android": { "allowMixedContent": false },
+  "plugins": {
+    "CapacitorHttp": { "enabled": false },
+    "SystemBars": { "insetsHandling": "disable" }
+  }
+}

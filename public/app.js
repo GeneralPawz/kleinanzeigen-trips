@@ -58,7 +58,13 @@ const unseenOf = (adid) => mailByAd[adid]?.unseen || 0;
 // ---------- helpers ----------
 // Every request goes through api(). window.TROEDEL_API_BASE (e.g. 'http://192.168.1.5:3000' in an Android WebView) prefixes '/api/…'; '' = same origin.
 const API_BASE = String(window.TROEDEL_API_BASE || '').replace(/\/+$/, '');
+// window.TROEDEL_LOCAL_API ({ handle(method, path, body) → {status, json} }) answers /api/… in-process (Android app, no server).
 async function api(path, opts = {}) {
+  if (window.TROEDEL_LOCAL_API) {
+    const { status, json } = await window.TROEDEL_LOCAL_API.handle(opts.method || 'GET', path, opts.body);
+    if (status >= 400) throw new Error((json && json.error) || `Fehler ${status}`);
+    return json;
+  }
   const res = await fetch(API_BASE + path, {
     ...opts,
     headers: opts.body ? { 'Content-Type': 'application/json' } : undefined,
@@ -936,7 +942,9 @@ function renderMailSection() {
   const s = mailStatus;
   box.replaceChildren(el('h3', { class: 'group-title', text: 'E-Mail' }));
   if (!s.configured) {
-    box.append(el('p', { class: 'small-note', text: 'Nicht eingerichtet. In .env einrichten – siehe README' }));
+    box.append(el('p', { class: 'small-note', text: window.TroedelApp
+      ? 'E-Mail-Hinweise nur in der Desktop-Version – auf dem Handy liefert die Kleinanzeigen-App Push-Benachrichtigungen.'
+      : 'Nicht eingerichtet. In .env einrichten – siehe README' }));
     return;
   }
   box.append(
@@ -1336,6 +1344,15 @@ function syncTabs() {
 function showPane(i, smooth = true) {
   panesEl.scrollTo({ left: i * panesEl.clientWidth, behavior: smooth ? 'smooth' : 'auto' });
 }
+
+/** Android back button: close the open drawer, else go from the map pane back to planning. true = handled. */
+window.TroedelUi = {
+  back() {
+    if (activeOverlay) { closeOverlay(); return true; }
+    if (PHONE_MQ.matches && paneIndex() === 1) { showPane(0); return true; }
+    return false;
+  },
+};
 
 function initPanes() {
   panesEl.addEventListener('scroll', () => requestAnimationFrame(syncTabs), { passive: true });
