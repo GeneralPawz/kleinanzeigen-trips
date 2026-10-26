@@ -41,6 +41,12 @@ let selectedAdid = null;
 let merk = new Map(); // adid -> { adid, ad, routeId, savedAt }
 let contacts = {}; // adid -> { status, notes, updatedAt }
 let routesCache = [];
+let mailStatus = { configured: false, provider: null, user: null, lastCheck: null, error: null };
+let mailByAd = {}; // adid -> { count, unseen, lastAt, lastSubject, link, match }
+let mailUnmatched = [];
+let mailTimer = null;
+const MAIL_POLL_MS = 60000;
+const unseenOf = (adid) => mailByAd[adid]?.unseen || 0;
 
 // ---------- helpers ----------
 async function api(path, opts = {}) {
@@ -522,10 +528,13 @@ function heartBtn(adid) {
 
 function chatChip(adid) {
   const st = contacts[adid]?.status || 'none';
+  const unseen = unseenOf(adid);
+  const mailTxt = unseen ? ` – ${unseen} neue Nachricht${unseen > 1 ? 'en' : ''} per E-Mail` : '';
   return el('button', {
-    type: 'button', class: 'chat-chip', 'data-act': 'chat', 'data-status': st, 'aria-label': `Kontakt: ${STATUS[st].label}`,
-    title: `Kontakt: ${STATUS[st].label}`, onclick: (e) => { e.stopPropagation(); openContact(adid); },
-  }, icon('chat'), STATUS[st].chip ? el('span', { text: STATUS[st].chip }) : null);
+    type: 'button', class: 'chat-chip', 'data-act': 'chat', 'data-status': st, 'aria-label': `Kontakt: ${STATUS[st].label}${mailTxt}`,
+    title: `Kontakt: ${STATUS[st].label}${mailTxt}`, onclick: (e) => { e.stopPropagation(); openContact(adid); },
+  }, icon('chat'), STATUS[st].chip ? el('span', { text: STATUS[st].chip }) : null,
+  unseen ? el('span', { class: 'mail-badge', text: String(unseen) }) : null);
 }
 
 function fillActions(box, r) {
@@ -599,12 +608,17 @@ function dotIcon(r) {
   const remembered = merk.has(r.adid);
   const dot = el('div', { class: `pin${r.adid === selectedAdid ? ' sel' : ''}`, style: `--c:${colorFor(r.query)}` });
   if (remembered) dot.append(el('span', { class: 'pin-heart' }, icon('heart')));
+  if (unseenOf(r.adid)) dot.append(el('span', { class: 'pin-mail' }));
   return L.divIcon({ className: '', html: dot, iconSize: [22, 22], iconAnchor: [11, 11] });
 }
+
+const BUBBLE_H = 62, LIFT = 70;
+const placement = new Map(); // adid -> { dx, lift } (bubble offset so overlapping bubbles stay readable)
 
 function bubbleIcon(r) {
   const remembered = merk.has(r.adid);
   const w = bubbleWidth();
+  const { dx = 0, lift = 0 } = placement.get(r.adid) || {};
   const btns = el('div', { class: 'b-btns' }, heartBtn(r.adid), chatChip(r.adid));
   L.DomEvent.disableClickPropagation(btns);
   const box = el('div', { class: `bubble${remembered ? ' remembered' : ''}${r.adid === selectedAdid ? ' sel' : ''}` },
@@ -612,17 +626,42 @@ function bubbleIcon(r) {
     el('div', { class: 'b-main' }, el('div', { class: 'b-title', text: r.title }), priceNode(r, 'b-price')),
     btns,
     remembered ? el('span', { class: 'b-badge' }, icon('heart')) : null);
-  const root = el('div', { class: 'bubble-root', style: `width:${w}px;--c:${colorFor(r.query)}` }, box, el('div', { class: 'tail' }));
-  return L.divIcon({ className: '', html: root, iconSize: [w, 62], iconAnchor: [w / 2, 62] });
+  const px = w / 2 + dx; // x of the real location inside the bubble box
+  const root = el('div', { class: 'bubble-root', style: `width:${w}px;height:${BUBBLE_H + lift}px;--c:${colorFor(r.query)};--lift:${lift}px;--px:${px}px` },
+    box, lift ? el('div', { class: 'stem' }) : null, el('div', { class: 'tail' }));
+  return L.divIcon({ className: '', html: root, iconSize: [w, BUBBLE_H + lift], iconAnchor: [px, BUBBLE_H + lift] });
 }
 
 const iconFor = (r) => (bubbleMode() ? bubbleIcon(r) : dotIcon(r));
+
+/** Greedy layout: shift a bubble sideways / up until it no longer covers an already placed one. */
+function layoutBubbles(spots) {
+  placement.clear();
+  const w = bubbleWidth();
+  const placed = [];
+  const tries = [[0, 0], [0.4, 0], [-0.4, 0], [0, 1], [0.4, 1], [-0.4, 1], [0, 2], [0.4, 2], [-0.4, 2]];
+  const order = [...spots].sort((a, b) => (b.r.adid === selectedAdid) - (a.r.adid === selectedAdid) || b.lat - a.lat);
+  for (const { r, ll } of order) {
+    const p = map.latLngToContainerPoint(ll);
+    let best = null;
+    for (const [fx, lv] of tries) {
+      const dx = Math.round(fx * w), lift = lv * LIFT;
+      const x0 = p.x - w / 2 - dx, y0 = p.y - BUBBLE_H - lift + 4, y1 = p.y - lift - 9;
+      const hit = placed.some((q) => x0 < q.x0 + w - 6 && x0 + w - 6 > q.x0 && y0 < q.y1 - 2 && y1 > q.y0 + 2);
+      best = { dx, lift, x0, y0, y1 };
+      if (!hit) break;
+    }
+    placed.push(best);
+    if (best.dx || best.lift) placement.set(r.adid, { dx: best.dx, lift: best.lift });
+  }
+}
 
 function drawAdMarkers() {
   adLayer.clearLayers();
   markers.clear();
   const seen = new Map();
   const bubbles = bubbleMode();
+  const spots = [];
   for (const r of shown) {
     if (typeof r.lat !== 'number' || typeof r.lon !== 'number') continue;
     const key = `${r.lat.toFixed(4)},${r.lon.toFixed(4)}`;
@@ -634,6 +673,10 @@ function drawAdMarkers() {
       lat += Math.sin(ang) * rad;
       lon += Math.cos(ang) * rad * 1.5;
     }
+    spots.push({ r, lat, lon, ll: L.latLng(lat, lon) });
+  }
+  if (bubbles) layoutBubbles(spots); else placement.clear();
+  for (const { r, lat, lon } of spots) {
     const m = L.marker([lat, lon], { icon: iconFor(r), title: bubbles ? undefined : r.title, keyboard: false, zIndexOffset: r.adid === selectedAdid ? 1000 : 0 }).addTo(adLayer);
     if (!bubbles) m.bindTooltip(`${r.title} – ${r.priceText || ''}`, { direction: 'top', offset: [0, -10] });
     m.on('click', () => {
@@ -737,6 +780,73 @@ async function delNote(adid, noteId) {
   onAdChanged(adid);
 }
 
+// ---------- mail notifications (optional, see docs/API.md) ----------
+async function loadMailNotifications() {
+  try {
+    const d = await api('/api/mail/notifications');
+    const before = mailByAd;
+    mailByAd = (d && d.byAd) || {};
+    mailUnmatched = (d && d.unmatched) || [];
+    for (const adid of new Set([...Object.keys(before), ...Object.keys(mailByAd)])) {
+      if (unseenOf(adid) !== (before[adid]?.unseen || 0) || before[adid]?.lastAt !== mailByAd[adid]?.lastAt) onAdChanged(adid);
+    }
+  } catch { /* keep the last known state */ }
+  renderMailSection();
+}
+
+async function loadMailStatus() {
+  try { mailStatus = await api('/api/mail/status'); } catch { /* keep */ }
+  if (mailStatus.configured) {
+    if (!mailTimer) mailTimer = setInterval(loadMailNotifications, MAIL_POLL_MS);
+    await loadMailNotifications();
+  } else {
+    clearInterval(mailTimer);
+    mailTimer = null;
+    mailByAd = {};
+    mailUnmatched = [];
+    renderMailSection();
+  }
+}
+
+async function checkMailNow() {
+  const btn = $('mail-check');
+  if (btn) { btn.disabled = true; btn.textContent = 'Prüfe …'; }
+  try { mailStatus = await api('/api/mail/check', { method: 'POST' }); await loadMailNotifications(); } catch (e) { toast(e.message, true); }
+  renderMailSection();
+}
+
+async function markMailSeen(adid) {
+  const n = mailByAd[adid];
+  if (!n || !n.unseen) return;
+  try { await api(`/api/mail/seen/${enc(adid)}`, { method: 'POST' }); } catch { return; }
+  n.unseen = 0;
+  onAdChanged(adid);
+}
+
+function renderMailSection() {
+  const box = $('mail-section');
+  const s = mailStatus;
+  box.replaceChildren(el('h3', { class: 'group-title', text: 'E-Mail' }));
+  if (!s.configured) {
+    box.append(el('p', { class: 'small-note', text: 'Nicht eingerichtet. In .env einrichten – siehe README' }));
+    return;
+  }
+  box.append(
+    el('p', { class: 'small-note', text: `Eingerichtet: ${s.user || s.provider || ''} · ${s.lastCheck ? `zuletzt geprüft ${fmtDate(s.lastCheck)}` : 'noch nicht geprüft'}` }),
+    ...(s.error ? [el('p', { class: 'error', text: `Fehler: ${s.error}` })] : []),
+    el('button', { type: 'button', id: 'mail-check', class: 'btn btn-small btn-ghost', text: 'Jetzt prüfen', onclick: checkMailNow }));
+  if (mailUnmatched.length) {
+    box.append(el('p', { class: 'small-note', text: `${mailUnmatched.length} Nachricht${mailUnmatched.length > 1 ? 'en' : ''} ohne passende Anzeige:` }));
+    const ul = el('ul', { class: 'mail-unmatched' });
+    for (const u of mailUnmatched) {
+      const link = safeUrl(u.link);
+      ul.append(el('li', {}, el('span', { text: u.subject || '(ohne Betreff)' }), el('time', { datetime: u.at, text: fmtDate(u.at) }),
+        link ? el('a', { href: link, target: '_blank', rel: 'noopener noreferrer', text: 'öffnen ↗' }) : null));
+    }
+    box.append(ul);
+  }
+}
+
 // ---------- slide-overs ----------
 const overlays = { nav: $('nav-drawer'), contact: $('contact-aside') };
 let activeOverlay = null;
@@ -754,7 +864,7 @@ function openOverlay(name) {
   activeOverlay = name;
   overlays[name].classList.add('open');
   $('backdrop').classList.add('open');
-  setTimeout(() => overlays[name].querySelector('.drawer-head .icon-btn')?.focus(), 30);
+  setTimeout(() => overlays[name].querySelector('.drawer-head .icon-btn')?.focus({ preventScroll: true }), 30);
 }
 
 function closeOverlay(restore = true) {
@@ -793,6 +903,7 @@ function setTab(tab) {
 async function openNav(tab) {
   openOverlay('nav');
   setTab(tab);
+  loadMailStatus();
 }
 
 async function renderRoutes() {
@@ -944,15 +1055,17 @@ function openContact(adid) {
       el('div', {}, el('h3', { text: ad.title }), priceNode(ad, 'price'),
         el('div', { class: 'meta', text: [ad.plz, ad.city].filter(Boolean).join(' ') }),
         el('div', { class: 'actions', id: 'aside-heart' }))),
+    el('div', { id: 'aside-mail' }),
     el('div', { class: 'c-field' }, el('label', { for: 'contact-status', text: 'Status' }), select),
     el('div', { class: 'c-field' }, el('h3', { text: 'Notizen' }), el('ul', { class: 'notes', id: 'notes-list', 'aria-label': 'Notizen' }),
       ta, el('button', { type: 'button', class: 'btn btn-primary btn-small', id: 'note-add', text: 'Notiz speichern', onclick: submit })),
     el('div', { class: 'c-actions' },
       link ? el('a', { class: 'btn btn-primary', href: link, target: '_blank', rel: 'noopener noreferrer', text: 'Verkäufer auf Kleinanzeigen schreiben' }) : null,
       el('a', { class: 'btn', href: INBOX_URL, target: '_blank', rel: 'noopener noreferrer', text: 'Kleinanzeigen-Nachrichten öffnen' })),
-    el('p', { class: 'c-note', text: 'Die App liest deine Kleinanzeigen-Nachrichten nicht – halte hier fest, was vereinbart ist.' }));
+    el('p', { class: 'c-note', text: 'Die App liest nicht in Kleinanzeigen mit – nur optionale E-Mail-Hinweise. Halte hier fest, was vereinbart ist.' }));
   syncAside();
   openOverlay('contact');
+  markMailSeen(adid);
 }
 
 function syncAside() {
@@ -961,6 +1074,16 @@ function syncAside() {
   const select = $('contact-status');
   if (!select) return;
   select.value = c.status;
+  const mail = mailByAd[adid];
+  const mbox = $('aside-mail');
+  mbox.replaceChildren();
+  if (mail) {
+    const link = safeUrl(mail.link) || safeUrl(adById(adid)?.url);
+    mbox.append(el('div', { class: 'mail-info' },
+      el('p', {}, el('b', { text: 'Neue Nachricht per E-Mail: ' }), `${mail.lastSubject || 'Nachricht'} (${fmtDate(mail.lastAt)})`,
+        mail.match === 'title' ? el('small', { text: ' (über den Titel zugeordnet)' }) : null),
+      link ? el('a', { href: link, target: '_blank', rel: 'noopener noreferrer', text: 'Auf Kleinanzeigen antworten' }) : null));
+  }
   const hb = $('aside-heart');
   hb.replaceChildren(heartBtn(adid), el('span', { class: 'meta', text: merk.has(adid) ? 'auf der Merkliste' : 'nicht gemerkt' }));
   const list = $('notes-list');
@@ -1083,6 +1206,7 @@ async function init() {
   window.addEventListener('pagehide', () => { if (dirty) flushSave(); });
 
   await Promise.all([loadMerk(), loadContacts()]);
+  loadMailStatus();
   try {
     const migrated = await migrateOld();
     const list = await api('/api/routes');

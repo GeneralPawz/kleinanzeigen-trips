@@ -107,7 +107,6 @@
 .b-price .vb { font-size: 10px; padding: 0 6px; margin-left: 4px; }
 .b-btns { display: flex; flex-direction: column; gap: 3px; justify-content: center; }
 .bubble .heart-btn, .bubble .chat-chip { width: 26px; height: 26px; min-width: 26px; padding: 0; }
-.bubble .chat-chip span { display: none; }
 .bubble.remembered { background: #fbfef4; }
 .b-badge { position: absolute; left: -9px; top: -9px; width: 20px; height: 20px; border-radius: 50%; background: #fff; border: 2px solid var(--lime); display: grid; place-items: center; }
 .b-badge svg { width: 11px; height: 11px; fill: #E03131; }
@@ -139,3 +138,30 @@
   .drawer { width: 100%; }
   .route-name-wrap input { padding: 5px 8px; font-size: 14px; }
 }
+
+/* page never scrolls sideways (off-canvas drawers must not shift it) */
+html, body { overflow: hidden; }
+
+/* bubble offsets for overlapping bubbles */
+.bubble-root .bubble { bottom: calc(9px + var(--lift, 0px)); }
+.bubble-root .tail { left: var(--px, 50%); bottom: calc(3px + var(--lift, 0px)); }
+.stem { position: absolute; left: calc(var(--px) - 1px); bottom: 0; width: 2px; height: calc(var(--lift) + 6px); background: var(--c); }
+
+/* new e-mail indicator */
+.chat-chip { position: relative; }
+.bubble .chat-chip span:not(.mail-badge) { display: none; }
+.mail-badge {
+  position: absolute; top: -7px; right: -7px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px; background: #E03131; color: #fff;
+  border: 2px solid #fff; font-size: 10px; line-height: 12px; font-weight: 700; text-align: center; box-sizing: content-box;
+}
+.pin-mail { position: absolute; left: -7px; top: -9px; width: 12px; height: 12px; border-radius: 50%; background: #E03131; border: 2px solid #fff; box-shadow: 0 1px 3px rgba(0,0,0,.5); }
+.mail-info { margin-top: 14px; padding: 10px 12px; background: #fff4e6; border: 1px solid #E8590C; border-radius: 8px; font-size: 14px; }
+.mail-info p { margin: 0 0 6px; overflow-wrap: anywhere; }
+.mail-info small { color: var(--muted); }
+.mail-info a { font-weight: 700; }
+.mail-section { margin-top: 18px; padding-top: 4px; border-top: 1px solid var(--border); }
+.mail-section .group-title { margin-top: 10px; }
+.mail-unmatched { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.mail-unmatched li { background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; font-size: 13px; display: flex; flex-wrap: wrap; gap: 2px 8px; align-items: baseline; }
+.mail-unmatched span { flex: 1 1 100%; overflow-wrap: anywhere; font-weight: 700; }
+.mail-unmatched time { color: var(--muted); font-size: 11px; }
