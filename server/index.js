@@ -31,6 +31,7 @@ app.use((err, _req, res, next) => {
   if (!err.status) return next(err);
   res.status(err.status).json({ error: err.type === 'entity.too.large' ? 'Anfrage zu groß (max. 1 MB)' : 'Ungültiges JSON' });
 });
+app.use('/vendor/markercluster', express.static(join(root, 'node_modules', 'leaflet.markercluster', 'dist')));
 app.use(express.static(join(root, 'public')));
 
 const port = Number(process.env.PORT) || 3000;

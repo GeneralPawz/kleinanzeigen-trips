@@ -23,6 +23,7 @@ const STATUS = {
 const ICONS = {
   heart: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>',
   chat: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 2H4a2 2 0 0 0-2 2v18l4-4h14a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2z"/></svg>',
+  close: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>',
   ext: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3h7v7M21 3l-9 9M19 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5"/></svg>',
 };
 const THEME_KEY = 'troedeltour.theme';
@@ -196,7 +197,6 @@ L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
 }).addTo(map);
 const routeLayer = L.layerGroup().addTo(map);
 const stopLayer = L.layerGroup().addTo(map);
-const adLayer = L.layerGroup().addTo(map);
 const markers = new Map(); // adid -> marker
 let routeLine = null;
 
@@ -609,7 +609,7 @@ function renderResults() {
     list.append(el('li', { class: 'empty-note', text: searchStatus === 'running' ? 'Noch keine Treffer …' : (state.mode === 'radius' ? 'Keine Anzeigen im Umkreis der Stopps gefunden.' : 'Keine Anzeigen im Korridor gefunden.') }));
   }
   for (const r of shown) list.append(card(r));
-  drawAdMarkers();
+  syncMarkers();
 }
 
 function priceNode(r, cls) {
@@ -696,41 +696,29 @@ function onAdChanged(adid) {
     li.classList.toggle('remembered', merk.has(adid));
     fillActions(li.querySelector('.actions'), r);
   }
-  const m = markers.get(adid);
-  if (m && resultsById.has(adid)) m.setIcon(iconFor(resultsById.get(adid)));
+  refreshMarkerOf(adid);
   updateMerkCount();
   if (activeOverlay === 'contact' && contactAdid === adid) syncAside();
   if (activeOverlay === 'nav' && currentTab === 'merk') renderMerk();
 }
 
-// ---------- ad markers ----------
-function highlight(adid, on) {
-  const m = markers.get(adid);
-  if (!m) return;
-  m.getElement()?.querySelector('.pin, .bubble')?.classList.toggle('hl', on);
-  m.setZIndexOffset(on || adid === selectedAdid ? 1000 : 0);
-  const c = $(`card-${adid}`);
-  if (c && !on) c.classList.remove('hl');
-}
-
+// ---------- ad markers (clustered) ----------
+const MAX_BUBBLES = 12;
+const SPOT_M = 150; // ads closer together than this open the "same place" list instead of zooming
+const bubbled = new Set(); // adids whose marker currently shows a speech bubble
 const bubbleWidth = () => (window.innerWidth < 800 ? 214 : 236);
-const bubbleMode = () => map.getZoom() >= BUBBLE_ZOOM;
+const BUBBLE_H = 70;
 
 function dotIcon(r) {
-  const remembered = merk.has(r.adid);
   const dot = el('div', { class: `pin${r.adid === selectedAdid ? ' sel' : ''}`, style: `--c:${colorFor(r.query)}` });
-  if (remembered) dot.append(el('span', { class: 'pin-heart' }, icon('heart')));
+  if (merk.has(r.adid)) dot.append(el('span', { class: 'pin-heart' }, icon('heart')));
   if (unseenOf(r.adid)) dot.append(el('span', { class: 'pin-mail' }));
   return L.divIcon({ className: '', html: dot, iconSize: [22, 22], iconAnchor: [11, 11] });
 }
 
-const BUBBLE_H = 70, LIFT = 78;
-const placement = new Map(); // adid -> { dx, lift } (bubble offset so overlapping bubbles stay readable)
-
 function bubbleIcon(r) {
   const remembered = merk.has(r.adid);
   const w = bubbleWidth();
-  const { dx = 0, lift = 0 } = placement.get(r.adid) || {};
   const link = safeUrl(r.url);
   const btns = el('div', { class: 'b-btns' }, heartBtn(r.adid), chatChip(r.adid),
     link ? el('a', { class: 'ka-btn', href: link, target: '_blank', rel: 'noopener noreferrer', title: 'Auf Kleinanzeigen öffnen', 'aria-label': `Auf Kleinanzeigen öffnen: ${r.title}` }, icon('ext')) : null);
@@ -740,81 +728,232 @@ function bubbleIcon(r) {
     el('div', { class: 'b-main' }, el('div', { class: 'b-title', text: r.title }), priceNode(r, 'b-price')),
     btns,
     remembered ? el('span', { class: 'b-badge' }, icon('heart')) : null);
-  const px = w / 2 + dx; // x of the real location inside the bubble box
-  const root = el('div', { class: 'bubble-root', style: `width:${w}px;height:${BUBBLE_H + lift}px;--c:${colorFor(r.query)};--lift:${lift}px;--px:${px}px` },
-    box, lift ? el('div', { class: 'stem' }) : null, el('div', { class: 'tail' }));
-  return L.divIcon({ className: '', html: root, iconSize: [w, BUBBLE_H + lift], iconAnchor: [px, BUBBLE_H + lift] });
+  const root = el('div', { class: 'bubble-root', style: `width:${w}px;height:${BUBBLE_H}px;--c:${colorFor(r.query)}` }, box, el('div', { class: 'tail' }));
+  return L.divIcon({ className: '', html: root, iconSize: [w, BUBBLE_H], iconAnchor: [w / 2, BUBBLE_H] });
 }
 
-const iconFor = (r) => (bubbleMode() ? bubbleIcon(r) : dotIcon(r));
+const iconFor = (r) => (bubbled.has(r.adid) ? bubbleIcon(r) : dotIcon(r));
+const zFor = (adid) => (adid === selectedAdid ? 1000 : bubbled.has(adid) ? 300 : 0);
 
-/** Greedy layout: shift a bubble sideways / up until it no longer covers an already placed one. */
-function layoutBubbles(spots) {
-  placement.clear();
-  const w = bubbleWidth();
-  const placed = [];
-  const tries = [[0, 0], [0.4, 0], [-0.4, 0], [0, 1], [0.4, 1], [-0.4, 1], [0, 2], [0.4, 2], [-0.4, 2]];
-  const order = [...spots].sort((a, b) => (b.r.adid === selectedAdid) - (a.r.adid === selectedAdid) || b.lat - a.lat);
-  for (const { r, ll } of order) {
-    const p = map.latLngToContainerPoint(ll);
-    let best = null;
-    for (const [fx, lv] of tries) {
-      const dx = Math.round(fx * w), lift = lv * LIFT;
-      const x0 = p.x - w / 2 - dx, y0 = p.y - BUBBLE_H - lift + 4, y1 = p.y - lift - 9;
-      const hit = placed.some((q) => x0 < q.x0 + w - 6 && x0 + w - 6 > q.x0 && y0 < q.y1 - 2 && y1 > q.y0 + 2);
-      best = { dx, lift, x0, y0, y1 };
-      if (!hit) break;
+/** Cluster badge: count in a circle (size grows with count), tiny heart / red dot when it hides a remembered or unread ad. */
+function clusterIcon(c) {
+  const kids = c.getAllChildMarkers();
+  const n = kids.length;
+  let heart = false, mail = false;
+  for (const k of kids) {
+    heart = heart || merk.has(k.options.adid);
+    mail = mail || !!unseenOf(k.options.adid);
+    if (heart && mail) break;
+  }
+  const size = n < 10 ? 38 : n < 50 ? 46 : n < 200 ? 54 : 62;
+  const node = el('div', { class: 'cl', style: `width:${size}px;height:${size}px;font-size:${size > 50 ? 17 : 15}px` },
+    el('span', { text: String(n) }),
+    heart ? el('span', { class: 'pin-heart' }, icon('heart')) : null,
+    mail ? el('span', { class: 'pin-mail' }) : null);
+  return L.divIcon({ className: 'cl-wrap', html: node, iconSize: [size, size] });
+}
+
+map.createPane('clusterPane').style.zIndex = 620; // cluster badges above stop pins and bubbles
+const adGroup = L.markerClusterGroup({
+  clusterPane: 'clusterPane',
+  chunkedLoading: true, showCoverageOnHover: false, zoomToBoundsOnClick: false, spiderfyOnMaxZoom: false,
+  maxClusterRadius: (z) => (z >= BUBBLE_ZOOM ? 90 : 56),
+  iconCreateFunction: clusterIcon,
+}).addTo(map);
+
+function highlight(adid, on) {
+  const m = markers.get(adid);
+  if (!m) return;
+  const host = adGroup.getVisibleParent(m);
+  host?._icon?.querySelector('.pin, .bubble, .cl')?.classList.toggle('hl', on);
+  m.setZIndexOffset(on ? 1000 : zFor(adid));
+  const c = $(`card-${adid}`);
+  if (c && !on) c.classList.remove('hl');
+}
+
+/** Bubbles only for markers that stand alone at bubble zoom, at most MAX_BUBBLES and never overlapping each other or a cluster badge. */
+function refreshBubbles() {
+  const want = new Set();
+  if (map.getZoom() >= BUBBLE_ZOOM) {
+    const bounds = map.getBounds();
+    const center = map.getCenter();
+    const w = bubbleWidth();
+    const taken = []; // pixel rects already used
+    const cands = [];
+    const clusters = new Set();
+    for (const [adid, m] of markers) {
+      const host = adGroup.getVisibleParent(m);
+      if (host && host !== m) { clusters.add(host); continue; }
+      if (!host || !bounds.contains(m.getLatLng())) continue;
+      const rank = adid === selectedAdid ? 0 : merk.has(adid) || unseenOf(adid) ? 1 : 2;
+      cands.push({ adid, ll: m.getLatLng(), rank, d: center.distanceTo(m.getLatLng()) });
     }
-    placed.push(best);
-    if (best.dx || best.lift) placement.set(r.adid, { dx: best.dx, lift: best.lift });
+    for (const c of clusters) {
+      const p = map.latLngToContainerPoint(c.getLatLng());
+      taken.push({ x0: p.x - 32, x1: p.x + 32, y0: p.y - 32, y1: p.y + 32 });
+    }
+    cands.sort((a, b) => a.rank - b.rank || a.d - b.d);
+    for (const c of cands) {
+      if (want.size >= MAX_BUBBLES) break;
+      const p = map.latLngToContainerPoint(c.ll);
+      const box = { x0: p.x - w / 2, x1: p.x + w / 2, y0: p.y - BUBBLE_H, y1: p.y + 6 };
+      if (c.rank && taken.some((q) => box.x0 < q.x1 && box.x1 > q.x0 && box.y0 < q.y1 && box.y1 > q.y0)) continue;
+      taken.push(box);
+      want.add(c.adid);
+    }
   }
+  const changed = [];
+  for (const adid of bubbled) if (!want.has(adid)) changed.push(adid);
+  for (const adid of want) if (!bubbled.has(adid)) changed.push(adid);
+  bubbled.clear();
+  for (const adid of want) bubbled.add(adid);
+  for (const adid of changed) {
+    const m = markers.get(adid), r = resultsById.get(adid);
+    if (m && r) { m.setIcon(iconFor(r)); m.setZIndexOffset(zFor(adid)); }
+  }
+}
+let bubbleTimer = null;
+const scheduleBubbles = () => { clearTimeout(bubbleTimer); bubbleTimer = setTimeout(refreshBubbles, 60); };
+
+/** Make the map markers match `shown`: only the difference is removed/added (streaming results don't rebuild everything). */
+function syncMarkers() {
+  const want = new Map();
+  for (const r of shown) if (typeof r.lat === 'number' && typeof r.lon === 'number') want.set(r.adid, r);
+  const drop = [], add = [];
+  for (const [adid, m] of markers) {
+    if (want.has(adid)) continue;
+    drop.push(m); markers.delete(adid); bubbled.delete(adid);
+  }
+  for (const [adid, r] of want) {
+    if (markers.has(adid)) continue;
+    const m = L.marker([r.lat, r.lon], { icon: dotIcon(r), adid, title: `${r.title} – ${r.priceText || ''}`, keyboard: false });
+    markers.set(adid, m);
+    add.push(m);
+  }
+  if (drop.length && !markers.size) adGroup.clearLayers();
+  else if (drop.length) adGroup.removeLayers(drop);
+  if (add.length) adGroup.addLayers(add);
+  scheduleBubbles();
+  if (spotAdids.length) refreshSpot();
 }
 
-function drawAdMarkers() {
-  adLayer.clearLayers();
-  markers.clear();
-  const seen = new Map();
-  const bubbles = bubbleMode();
-  const spots = [];
-  for (const r of shown) {
-    if (typeof r.lat !== 'number' || typeof r.lon !== 'number') continue;
-    const key = `${r.lat.toFixed(4)},${r.lon.toFixed(4)}`;
-    const n = seen.get(key) || 0;
-    seen.set(key, n + 1);
-    let { lat, lon } = r;
-    if (n) { // spread identical coordinates on a small spiral
-      const ang = n * 2.4, rad = 0.0007 * Math.sqrt(n);
-      lat += Math.sin(ang) * rad;
-      lon += Math.cos(ang) * rad * 1.5;
-    }
-    spots.push({ r, lat, lon, ll: L.latLng(lat, lon) });
-  }
-  if (bubbles) layoutBubbles(spots); else placement.clear();
-  for (const { r, lat, lon } of spots) {
-    const m = L.marker([lat, lon], { icon: iconFor(r), title: bubbles ? undefined : r.title, keyboard: false, zIndexOffset: r.adid === selectedAdid ? 1000 : 0 }).addTo(adLayer);
-    if (!bubbles) m.bindTooltip(`${r.title} – ${r.priceText || ''}`, { direction: 'top', offset: [0, -10] });
-    m.on('click', () => {
-      selectedAdid = r.adid;
-      applySelection();
-      const c = $(`card-${r.adid}`);
-      if (!c) return;
-      c.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      c.classList.remove('flash'); void c.offsetWidth; c.classList.add('flash');
-    });
-    m.on('mouseover', () => $(`card-${r.adid}`)?.classList.add('hl'));
-    m.on('mouseout', () => $(`card-${r.adid}`)?.classList.remove('hl'));
-    markers.set(r.adid, m);
-  }
-}
+adGroup.on('click', (e) => {
+  const adid = e.layer.options?.adid;
+  if (!adid) return;
+  selectedAdid = adid;
+  applySelection();
+  const c = $(`card-${adid}`);
+  if (!c) return;
+  c.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  c.classList.remove('flash'); void c.offsetWidth; c.classList.add('flash');
+});
+adGroup.on('mouseover', (e) => { const id = e.layer.options?.adid; if (id) $(`card-${id}`)?.classList.add('hl'); });
+adGroup.on('mouseout', (e) => { const id = e.layer.options?.adid; if (id) $(`card-${id}`)?.classList.remove('hl'); });
+adGroup.on('clusterclick', (e) => {
+  const kids = e.layer.getAllChildMarkers();
+  if (spreadM(kids) <= SPOT_M || map.getZoom() >= map.getMaxZoom()) openSpot(kids);
+  else e.layer.zoomToBounds({ padding: [48, 48] });
+});
+adGroup.on('animationend', scheduleBubbles);
+map.on('moveend', scheduleBubbles);
 
 function applySelection() {
-  document.querySelectorAll('.listing.sel').forEach((n) => n.classList.remove('sel'));
-  if (selectedAdid) $(`card-${selectedAdid}`)?.classList.add('sel');
+  document.querySelectorAll('.listing.sel, .spot-row.sel').forEach((n) => n.classList.remove('sel'));
+  if (selectedAdid) {
+    $(`card-${selectedAdid}`)?.classList.add('sel');
+    spotEl.querySelector(`[data-adid="${selectedAdid}"]`)?.classList.add('sel');
+  }
   for (const [adid, m] of markers) {
     const on = adid === selectedAdid;
     m.getElement()?.querySelector('.pin, .bubble')?.classList.toggle('sel', on);
-    m.setZIndexOffset(on ? 1000 : 0);
+    m.setZIndexOffset(zFor(adid));
   }
+  scheduleBubbles();
+}
+
+// ---------- "n Anzeigen in PLZ Ort": list for ads that share (nearly) one place ----------
+const spotEl = el('div', { class: 'spot-sheet', hidden: true, role: 'dialog', 'aria-label': 'Anzeigen an diesem Ort' });
+$('map-wrap').append(spotEl);
+L.DomEvent.disableClickPropagation(spotEl);
+L.DomEvent.disableScrollPropagation(spotEl);
+let spotAdids = [];
+
+function spreadM(kids) {
+  let far = 0;
+  const o = kids[0].getLatLng();
+  for (const k of kids) far = Math.max(far, o.distanceTo(k.getLatLng()));
+  return far;
+}
+
+function openSpot(kids) {
+  spotAdids = kids.map((k) => k.options.adid).filter((id) => resultsById.has(id))
+    .sort((a, b) => resultsById.get(a).kmAlongRoute - resultsById.get(b).kmAlongRoute);
+  refreshSpot();
+}
+function closeSpot() {
+  spotAdids = [];
+  spotEl.hidden = true;
+  spotEl.replaceChildren();
+}
+map.on('click', closeSpot);
+
+function refreshSpot() {
+  const ads = spotAdids.map((id) => resultsById.get(id)).filter((r) => r && markers.has(r.adid));
+  spotAdids = ads.map((r) => r.adid);
+  if (!ads.length) return closeSpot();
+  const tally = new Map();
+  for (const r of ads) { const k = [r.plz, r.city].filter(Boolean).join(' '); tally.set(k, (tally.get(k) || 0) + 1); }
+  const place = [...tally].sort((a, b) => b[1] - a[1])[0][0];
+  const list = el('ul', { class: 'spot-list' });
+  for (const r of ads) {
+    const row = el('li', { class: `spot-row${r.adid === selectedAdid ? ' sel' : ''}${merk.has(r.adid) ? ' remembered' : ''}`, 'data-adid': r.adid, style: `--c:${colorFor(r.query)}`, tabindex: '0' },
+      thumbNode(r, 'b-thumb'),
+      el('div', { class: 'b-main' }, el('div', { class: 'b-title', text: r.title }), priceNode(r, 'b-price')),
+      heartBtn(r.adid), chatChip(r.adid));
+    const pick = () => {
+      selectedAdid = r.adid;
+      applySelection();
+      const c = $(`card-${r.adid}`);
+      if (c) { c.scrollIntoView({ block: 'nearest' }); c.classList.remove('flash'); void c.offsetWidth; c.classList.add('flash'); }
+    };
+    row.addEventListener('click', (e) => { if (!e.target.closest('a, button')) pick(); });
+    row.addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.key === ' ') && e.target === row) { e.preventDefault(); pick(); } });
+    row.addEventListener('mouseenter', () => $(`card-${r.adid}`)?.classList.add('hl'));
+    row.addEventListener('mouseleave', () => $(`card-${r.adid}`)?.classList.remove('hl'));
+    list.append(row);
+  }
+  const scroll = spotEl.querySelector('.spot-list')?.scrollTop || 0;
+  spotEl.replaceChildren(
+    el('div', { class: 'spot-head' },
+      el('h3', { text: `${ads.length} ${ads.length === 1 ? 'Anzeige' : 'Anzeigen'} in ${place}` }),
+      el('button', { type: 'button', class: 'icon-btn', 'aria-label': 'Schließen', onclick: closeSpot }, icon('close'))),
+    list);
+  const wasHidden = spotEl.hidden;
+  spotEl.hidden = false;
+  list.scrollTop = scroll;
+  if (wasHidden) panAwayFromSheet(ads);
+  const sel = list.querySelector('.sel');
+  if (sel && !scroll) sel.scrollIntoView({ block: 'nearest' });
+}
+
+/** Keep the opened place visible: pan the map when the sheet would cover its pin. */
+function panAwayFromSheet(ads) {
+  const m = markers.get(ads[0].adid);
+  if (!m) return;
+  const size = map.getSize(), p = map.latLngToContainerPoint(m.getLatLng());
+  const sheet = { x0: spotEl.offsetLeft, x1: spotEl.offsetLeft + spotEl.offsetWidth, y0: spotEl.offsetTop };
+  if (p.x < sheet.x0 - 20 || p.x > sheet.x1 + 20 || p.y < sheet.y0 - 40) return;
+  const free = PHONE_MQ.matches ? [size.x / 2, sheet.y0 / 2] : [sheet.x0 / 2, size.y / 2];
+  map.panBy([p.x - free[0], p.y - free[1]], { duration: 0.4 });
+}
+
+/** Re-sync a marker's icon, the cluster badges and the spot list after merk/contact data of one ad changed. */
+function refreshMarkerOf(adid) {
+  const m = markers.get(adid);
+  const r = resultsById.get(adid);
+  if (m && r) m.setIcon(iconFor(r));
+  adGroup.refreshClusters();
+  if (spotAdids.includes(adid)) refreshSpot();
 }
 
 /** Show an ad on the map: fly to its pin (zoom 14) where the bubble opens, mark its card. */
@@ -826,10 +965,14 @@ function selectAd(adid, { fly = true } = {}) {
   applySelection();
   const m = markers.get(adid);
   if (PHONE_MQ.matches) showPane(1);
-  if (m && fly) map.flyTo(m.getLatLng(), 14, { duration: 0.8 });
+  if (!m || !fly) return;
+  const mates = [...markers.values()].filter((k) => k.getLatLng().distanceTo(m.getLatLng()) <= SPOT_M);
+  map.flyTo(m.getLatLng(), Math.max(map.getZoom(), 14), { duration: 0.8 });
+  map.once('moveend', () => {
+    if (mates.length > 1) openSpot(mates);
+    else adGroup.zoomToShowLayer(m, scheduleBubbles);
+  });
 }
-
-map.on('zoomend', () => { drawAdMarkers(); applySelection(); });
 
 // ---------- Merkliste (app-local) ----------
 function updateMerkCount() {

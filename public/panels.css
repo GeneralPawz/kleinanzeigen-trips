@@ -133,10 +133,6 @@
 /* page never scrolls sideways (off-canvas drawers must not shift it) */
 html, body { overflow: hidden; }
 
-/* bubble offsets for overlapping bubbles */
-.bubble-root .bubble { bottom: calc(9px + var(--lift, 0px)); }
-.bubble-root .tail { left: var(--px, 50%); bottom: calc(3px + var(--lift, 0px)); }
-.stem { position: absolute; left: calc(var(--px) - 1px); bottom: 0; width: 2px; height: calc(var(--lift) + 6px); background: var(--c); }
 
 /* new e-mail indicator */
 .chat-chip { position: relative; }
@@ -156,3 +152,37 @@ html, body { overflow: hidden; }
 .mail-unmatched li { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; font-size: 13px; display: flex; flex-wrap: wrap; gap: 2px 8px; align-items: baseline; }
 .mail-unmatched span { flex: 1 1 100%; overflow-wrap: anywhere; font-weight: 700; }
 .mail-unmatched time { color: var(--muted); font-size: 11px; }
+
+/* clusters: circle with count (green on light, lime on dark) */
+.cl-wrap { background: none; }
+.cl {
+  position: relative; border-radius: 50%; display: grid; place-items: center; font-weight: 800; font-variant-numeric: tabular-nums;
+  background: var(--green-dark); color: #fff; border: 3px solid var(--lime);
+  box-shadow: 0 0 0 5px rgba(29,75,0,.28), 0 2px 7px rgba(0,0,0,.5); transition: transform .12s;
+}
+.cl.hl { transform: scale(1.15); box-shadow: 0 0 0 4px var(--lime), 0 2px 7px rgba(0,0,0,.5); }
+html[data-theme=dark] .cl { background: var(--lime); color: #0b1a05; border-color: #fff; box-shadow: 0 0 0 5px rgba(181,233,65,.28), 0 2px 7px rgba(0,0,0,.6); }
+.cl .pin-heart { right: -6px; top: -6px; }
+.cl .pin-mail { left: -5px; top: -6px; }
+
+/* same-place list: bottom sheet on phones, side list on desktop */
+.spot-sheet {
+  position: absolute; z-index: 1000; left: 0; right: 0; bottom: 0; max-height: 52%; display: flex; flex-direction: column;
+  background: var(--surface); color: var(--text); border-radius: 14px 14px 0 0; box-shadow: 0 -4px 18px rgba(0,0,0,.35); border-top: 3px solid var(--lime);
+}
+.spot-sheet[hidden] { display: none; }
+.spot-head { display: flex; align-items: center; gap: 8px; padding: 8px 8px 6px 14px; flex: none; }
+.spot-head .icon-btn svg { width: 16px; height: 16px; }
+.spot-head h3 { margin: 0; flex: 1; font-size: 15px; color: var(--head-text); }
+.spot-list { list-style: none; margin: 0; padding: 0 8px 8px; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 6px; }
+.spot-row {
+  display: flex; align-items: center; gap: 8px; padding: 6px; border: 2px solid var(--c, var(--green)); border-radius: 10px; background: var(--surface); cursor: pointer; flex: none;
+}
+.spot-row.remembered { background: var(--tint-soft); }
+.spot-row.sel, .spot-row:hover { box-shadow: 0 0 0 3px var(--lime); }
+.spot-row .b-thumb { width: 48px; height: 48px; }
+.spot-row .b-title { font-size: 13px; }
+.spot-row .heart-btn, .spot-row .chat-chip { width: 34px; height: 34px; min-width: 34px; padding: 0; flex: none; }
+@media (min-width: 800px) {
+  .spot-sheet { left: auto; right: 12px; bottom: 28px; width: 360px; max-height: calc(100% - 80px); border-radius: 12px; border: 1px solid var(--border); border-top: 3px solid var(--lime); }
+}

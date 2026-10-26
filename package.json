@@ -20,6 +20,7 @@
     "express": "^4.21.0",
     "imapflow": "^2.9.1",
     "leaflet": "^1.9.4",
+    "leaflet.markercluster": "^1.5.3",
     "mailparser": "^3.12.4",
     "node-html-parser": "^9.0.5"
   },

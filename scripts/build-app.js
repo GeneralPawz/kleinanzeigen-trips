@@ -1,4 +1,4 @@
-// Builds the Capacitor web bundle: public/ + vendored Leaflet + core/ + app/ adapter → www/
+// Builds the Capacitor web bundle: public/ + vendored Leaflet + markercluster + core/ + app/ adapter → www/
 import { build } from 'esbuild';
 import { cp, rm, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
@@ -10,12 +10,14 @@ const p = (...a) => join(root, ...a);
 
 await rm(www, { recursive: true, force: true });
 await mkdir(join(www, 'vendor', 'leaflet'), { recursive: true });
+await mkdir(join(www, 'vendor', 'markercluster'), { recursive: true });
 
 await cp(p('public'), www, { recursive: true });
 await cp(p('data', 'plz-de.json'), join(www, 'plz-de.json'));
 await cp(p('node_modules', 'leaflet', 'dist', 'leaflet.js'), join(www, 'vendor', 'leaflet', 'leaflet.js'));
 await cp(p('node_modules', 'leaflet', 'dist', 'leaflet.css'), join(www, 'vendor', 'leaflet', 'leaflet.css'));
 await cp(p('node_modules', 'leaflet', 'dist', 'images'), join(www, 'vendor', 'leaflet', 'images'), { recursive: true });
+for (const f of ['leaflet.markercluster.js', 'MarkerCluster.css']) await cp(p('node_modules', 'leaflet.markercluster', 'dist', f), join(www, 'vendor', 'markercluster', f));
 
 await build({
   entryPoints: [p('app', 'native.js')],
