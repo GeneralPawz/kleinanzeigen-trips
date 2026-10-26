@@ -43,9 +43,8 @@ a { color: var(--green); }
 .brand-mark { width: 30px; height: 30px; flex: none; }
 .brand h1 { margin: 0; font-size: 20px; line-height: 1.05; font-weight: 700; display: flex; flex-direction: column; }
 .brand h1 small { font-size: 11px; font-weight: 400; color: var(--lime); letter-spacing: .02em; }
-.account { display: flex; align-items: center; gap: 10px; font-size: 14px; text-align: right; }
-.account .hint { opacity: .75; font-size: 12px; cursor: help; }
-.account .user { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40vw; }
+.account { color: var(--lime); font-size: 14px; font-weight: 600; text-decoration: none; white-space: nowrap; }
+.account:hover { color: #fff; text-decoration: underline; }
 .topbar :focus-visible { outline-color: #fff; }
 
 /* Layout */
@@ -90,10 +89,6 @@ a { color: var(--green); }
 .btn-wide { flex: 1; }
 .btn-small { padding: 4px 12px; font-size: 13px; }
 .btn:disabled { opacity: .55; cursor: not-allowed; }
-.topbar .btn { background: var(--lime); color: var(--green-dark); border-color: var(--lime); padding: 6px 14px; font-size: 14px; }
-.topbar .btn:hover:not(:disabled) { background: #fff; }
-.topbar .btn.outline { background: transparent; color: #fff; border-color: rgba(255,255,255,.6); }
-.topbar .btn.outline:hover:not(:disabled) { background: rgba(255,255,255,.15); }
 .icon-btn {
   width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--border); background: #fff;
   cursor: pointer; color: var(--green); line-height: 1; padding: 0; flex: none;
@@ -185,7 +180,7 @@ progress { width: 100%; height: 10px; accent-color: var(--green); }
   .map-wrap { order: -1; flex: none; height: 45vh; }
   .panel { width: 100%; flex: 1; border-right: 0; }
   .brand h1 { font-size: 18px; }
+  .account { font-size: 13px; }
   .item { grid-template-columns: 1fr 64px 64px 30px; }
-  .topbar .btn { white-space: nowrap; padding: 5px 10px; font-size: 13px; }
 }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }

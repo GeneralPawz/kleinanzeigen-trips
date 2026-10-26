@@ -82,15 +82,6 @@ export function startSearch(body, search = searchPlz) {
   return job.id;
 }
 
-/** URL of an ad seen in any job (needed to open it for the watchlist). */
-export function findAdUrl(adid) {
-  for (const j of jobs.values()) {
-    const r = j.results.find((x) => x.adid === adid);
-    if (r) return r.url;
-  }
-  return null;
-}
-
 export function getJob(id) {
   const j = jobs.get(id);
   if (!j) return null;

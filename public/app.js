@@ -16,7 +16,6 @@ let results = [];
 let filterQuery = null;
 let searchStatus = null;
 let pollTimer = null;
-let loggedIn = false;
 
 // ---------- helpers ----------
 async function api(path, opts = {}) {
@@ -384,10 +383,6 @@ function card(r) {
   const link = safeUrl(r.url);
   const actions = el('div', { class: 'actions' },
     link ? el('a', { href: link, target: '_blank', rel: 'noopener noreferrer' }, 'Anzeige öffnen', el('span', { class: 'sr-only', style: 'position:absolute;left:-9999px', text: ` – ${r.title}` })) : null);
-  if (loggedIn) {
-    const b = el('button', { type: 'button', class: 'btn btn-small', text: 'Merken', onclick: () => watch(r, b) });
-    actions.append(b);
-  }
   const li = el('li', { class: 'listing', id: `card-${r.adid}`, style: `--c:${color}` },
     img,
     el('div', {},
@@ -403,21 +398,6 @@ function card(r) {
   li.addEventListener('focusin', () => highlight(r.adid, true));
   li.addEventListener('focusout', () => highlight(r.adid, false));
   return li;
-}
-
-async function watch(r, btn) {
-  btn.disabled = true;
-  try {
-    const res = await api(`/api/watchlist/${encodeURIComponent(r.adid)}`, { method: 'POST' });
-    if (res.ok) { btn.textContent = 'Gemerkt ✓'; return; }
-    const u = safeUrl(res.fallbackUrl);
-    if (u) window.open(u, '_blank', 'noopener');
-    btn.textContent = 'Auf Kleinanzeigen merken';
-    btn.disabled = false;
-  } catch (e) {
-    btn.textContent = 'Fehler – erneut';
-    btn.disabled = false;
-  }
 }
 
 // ---------- ad markers ----------
@@ -461,36 +441,6 @@ function drawAdMarkers(shown) {
   }
 }
 
-// ---------- account ----------
-async function renderAccount() {
-  const box = $('account');
-  let st;
-  try { st = await api('/api/auth/status'); } catch { box.replaceChildren(); return; }
-  loggedIn = !!st.loggedIn;
-  box.replaceChildren();
-  if (!st.available) {
-    box.append(el('span', { class: 'hint', title: 'Anmeldung nicht verfügbar (Playwright ist auf dem Server nicht installiert).', tabindex: '0', text: 'ⓘ Anmeldung nicht verfügbar' }));
-  } else if (st.loggedIn) {
-    box.append(
-      el('span', { class: 'user', text: `Angemeldet als ${st.username || 'Nutzer'}` }),
-      el('button', {
-        type: 'button', class: 'btn outline', text: 'Abmelden',
-        onclick: async () => { try { await api('/api/auth/logout', { method: 'POST' }); } catch { /* ignore */ } renderAccount(); },
-      }));
-  } else {
-    const msg = el('span', { role: 'status' });
-    const btn = el('button', { type: 'button', class: 'btn', text: 'Mit Kleinanzeigen verbinden' });
-    btn.addEventListener('click', async () => {
-      btn.disabled = true;
-      msg.textContent = 'Bitte im geöffneten Browserfenster anmelden…';
-      try { await api('/api/auth/login', { method: 'POST' }); } catch (e) { msg.textContent = e.message; btn.disabled = false; return; }
-      await renderAccount();
-    });
-    box.append(msg, btn);
-  }
-  if (results.length) renderResults();
-}
-
 // ---------- init ----------
 function init() {
   load();
@@ -521,7 +471,6 @@ function init() {
   $('calc-route').addEventListener('click', calcRoute);
   $('search').addEventListener('click', startSearch);
   drawRoute(true);
-  renderAccount();
 }
 
 init();

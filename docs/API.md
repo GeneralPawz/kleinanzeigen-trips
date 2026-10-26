@@ -31,8 +31,5 @@ All JSON. Errors: `{ "error": "message" }` with 4xx/5xx.
 ```
 Results are deduped by adid, filtered to `distanceToRouteKm <= corridorKm`, sorted by `kmAlongRoute`, and appear incrementally while running. `blocked` = Kleinanzeigen showed a captcha or 403/429; stop and keep the partial results.
 
-## Kleinanzeigen account (optional)
-- `GET /api/auth/status` → `{ "loggedIn": false, "username": null, "available": true }` (`available` false if Playwright is not installed)
-- `POST /api/auth/login` → opens a visible Chromium window (persistent profile in `.sessions/`) on the Kleinanzeigen login page. The user signs in there themselves; the app never sees the password. Resolves `{ loggedIn, username }` once logged in (timeout 5 min).
-- `POST /api/auth/logout` → clears the profile.
-- `POST /api/watchlist/:adid` → adds the ad to the user's Merkliste using the session (best effort) → `{ "ok": true }` or `{ "ok": false, "fallbackUrl": "<ad url>" }`.
+## No account handling
+The backend never logs into Kleinanzeigen and has no `/api/auth/*` or `/api/watchlist/*` routes. The user is signed in on kleinanzeigen.de in their own browser; the UI links each result to the ad (`url`, opened in a new tab) and the header to the Merkliste (https://www.kleinanzeigen.de/m-merkliste.html), where saving and messaging happen.

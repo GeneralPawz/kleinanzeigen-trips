@@ -4,8 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { geocode } from './geocode.js';
 import { getRoute } from './route.js';
-import { startSearch, getJob, validateSearch, findAdUrl } from './search.js';
-import * as auth from './auth.js';
+import { startSearch, getJob, validateSearch } from './search.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const app = express();
@@ -51,17 +50,6 @@ app.get(
     const job = getJob(req.params.jobId);
     if (!job) return res.status(404).json({ error: 'Job nicht gefunden' });
     res.json(job);
-  }),
-);
-
-app.get('/api/auth/status', wrap(async (_req, res) => res.json(await auth.status())));
-app.post('/api/auth/login', wrap(async (_req, res) => res.json(await auth.login())));
-app.post('/api/auth/logout', wrap(async (_req, res) => res.json(await auth.logout())));
-app.post(
-  '/api/watchlist/:adid',
-  wrap(async (req, res) => {
-    const { adid } = req.params;
-    res.json(await auth.addToWatchlist(adid, findAdUrl(adid)));
   }),
 );
 
