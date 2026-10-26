@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trödeltour – für Kleinanzeigen</title>
+  <meta name="theme-color" content="#1D4B00">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="16" fill="#B5E941"/><path d="M16 5a7 7 0 0 0-7 7c0 5 7 13 7 13s7-8 7-13a7 7 0 0 0-7-7zm0 9.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5z" fill="#1D4B00"/></svg>
+      <h1>Trödeltour<small>für Kleinanzeigen</small></h1>
+    </div>
+    <div id="account" class="account" aria-live="polite"></div>
+  </header>
+
+  <main class="layout">
+    <section class="panel" id="panel" aria-label="Planung und Ergebnisse">
+      <section class="card step" aria-labelledby="h-route">
+        <h2 id="h-route"><span class="num">1</span> Route</h2>
+        <ol id="stops" class="stops"></ol>
+        <div class="row">
+          <button type="button" id="add-stop" class="btn btn-ghost">+ Zwischenstopp</button>
+          <button type="button" id="calc-route" class="btn btn-primary">Route berechnen</button>
+        </div>
+        <p id="route-info" class="info" role="status"></p>
+        <p id="route-error" class="error" role="alert" hidden></p>
+      </section>
+
+      <section class="card step" aria-labelledby="h-search">
+        <h2 id="h-search"><span class="num">2</span> Suche</h2>
+        <ul id="items" class="items"></ul>
+        <div class="row">
+          <button type="button" id="add-item" class="btn btn-ghost">+ Suchbegriff</button>
+        </div>
+        <div class="corridor">
+          <label for="corridor">Suchkorridor: <output id="corridor-out" for="corridor">20 km</output> links und rechts der Route</label>
+          <input type="range" id="corridor" min="5" max="50" step="1" value="20">
+        </div>
+        <div class="row">
+          <button type="button" id="search" class="btn btn-primary btn-wide">Entlang der Route suchen</button>
+        </div>
+        <div id="progress-wrap" class="progress-wrap" hidden>
+          <progress id="progress" max="100" value="0" aria-label="Suchfortschritt"></progress>
+          <span id="progress-text" class="progress-text" role="status"></span>
+        </div>
+        <p id="search-error" class="error" role="alert" hidden></p>
+        <p id="blocked" class="banner" role="alert" hidden>
+          ⚠ Kleinanzeigen hat die Suche vorübergehend blockiert (Captcha oder Limit). Die bisher gefundenen Ergebnisse bleiben erhalten – bitte später erneut versuchen.
+        </p>
+      </section>
+
+      <section class="results" aria-labelledby="h-results" id="results-section" hidden>
+        <h2 id="h-results">Ergebnisse <span id="result-count" class="count"></span></h2>
+        <div id="chips" class="chips" role="group" aria-label="Nach Suchbegriff filtern"></div>
+        <ul id="results" class="results-list"></ul>
+      </section>
+
+      <footer class="foot">Karte © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>-Mitwirkende. Inoffizielles Hilfsmittel, nicht mit Kleinanzeigen verbunden.</footer>
+    </section>
+
+    <div class="map-wrap">
+      <div id="map" role="application" aria-label="Karte mit Route und Anzeigen"></div>
+    </div>
+  </main>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
