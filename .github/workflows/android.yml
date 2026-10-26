@@ -3,6 +3,7 @@ name: Android APK
 on:
   push:
     tags: ['v*']
+    branches: [android] # lets the branch build before this workflow exists on main
   workflow_dispatch:
 
 permissions:
