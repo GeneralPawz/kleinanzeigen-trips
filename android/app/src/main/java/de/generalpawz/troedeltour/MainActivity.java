@@ -1,11 +1,9 @@
 package de.generalpawz.troedeltour;
 
+import android.graphics.Color;
+import android.os.Build;
 import android.os.Bundle;
-import android.view.View;
-import androidx.core.graphics.Insets;
-import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowCompat;
-import androidx.core.view.WindowInsetsCompat;
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
@@ -13,15 +11,14 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(InstallerPlugin.class);
         super.onCreate(savedInstanceState);
-        // Edge-to-edge is enforced on recent Android: pad the content by system bars, cutout and keyboard.
+        // Edge-to-edge: the WebView fills the screen under transparent system bars. The single inset mechanism is
+        // Capacitor's SystemBars plugin (insetsHandling "css"), which exposes --safe-area-inset-* to the page.
         WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
-        View content = findViewById(android.R.id.content);
-        ViewCompat.setOnApplyWindowInsetsListener(content, (v, insets) -> {
-            Insets i = insets.getInsets(
-                WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout() | WindowInsetsCompat.Type.ime()
-            );
-            v.setPadding(i.left, i.top, i.right, i.bottom);
-            return WindowInsetsCompat.CONSUMED;
-        });
+        getWindow().setStatusBarColor(Color.TRANSPARENT);
+        getWindow().setNavigationBarColor(Color.TRANSPARENT);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            getWindow().setNavigationBarContrastEnforced(false);
+            getWindow().setStatusBarContrastEnforced(false);
+        }
     }
 }

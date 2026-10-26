@@ -1,6 +1,6 @@
 {
   "name": "troedeltour",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "description": "Trödeltour – Kleinanzeigen-Suche entlang einer Route",
@@ -26,7 +26,8 @@
     "@capacitor/android": "^8.5.3",
     "@capacitor/cli": "~8.4.3",
     "adm-zip": "^0.6.1",
-    "esbuild": "^0.28.2"
+    "esbuild": "^0.28.2",
+    "sharp": "^0.35.5"
   },
   "engines": {
     "node": ">=22"

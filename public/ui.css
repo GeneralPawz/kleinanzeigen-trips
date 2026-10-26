@@ -61,6 +61,9 @@ html[data-theme=dark] .bubble .heart-btn, html[data-theme=dark] .bubble .chat-ch
 /* contain Leaflet's z-indexes; phone-only chrome hidden on desktop */
 .map-wrap { isolation: isolate; }
 .edge-swipe, .tabbar { display: none; }
+.seg button .short { display: none; }
+/* up/down buttons are for keyboard and mouse; touch and narrow screens reorder by dragging */
+@media (pointer: coarse), (max-width: 799px) { .stop .up, .stop .down { display: none; } }
 
 /* ---------- phone: two panes (Planung | Karte) side by side, swipe horizontally ---------- */
 @media (max-width: 799px) {
@@ -103,7 +106,7 @@ html[data-theme=dark] .bubble .heart-btn, html[data-theme=dark] .bubble .chat-ch
   .btn-small { min-height: 44px; padding: 6px 14px; }
   .icon-btn, .notes .icon-btn { width: 44px; height: 44px; }
   .radius-btn { height: 44px; padding: 0 14px; font-size: 13px; }
-  .drag-handle { width: 40px; height: 44px; font-size: 22px; }
+  .drag-handle { width: 32px; height: 44px; font-size: 22px; }
   .listing .heart-btn, .listing .chat-chip, .merk-item .heart-btn, .merk-item .chat-chip, .c-summary .heart-btn { width: 44px; height: 44px; min-width: 44px; }
   .listing .actions a { display: inline-flex; align-items: center; min-height: 44px; }
   .listing .heart-btn svg, .listing .chat-chip svg { width: 20px; height: 20px; }
@@ -112,12 +115,28 @@ html[data-theme=dark] .bubble .heart-btn, html[data-theme=dark] .bubble .chat-ch
   .route-open { min-height: 44px; }
   input[type=range] { min-height: 44px; touch-action: pan-y; }
   input[type=text], input[type=number] { min-height: 44px; }
-  .item { grid-template-columns: 1fr 72px 72px 44px; }
+  /* compact cards: 12px outer gaps and padding, no empty bands */
+  .card { padding: 12px; }
+  .step h2, .results h2 { margin-bottom: 8px; }
+  .stops, .items { gap: 8px; }
+  .row { margin-top: 8px; gap: 8px; }
+  .row .btn { padding-left: 14px; padding-right: 14px; }
+  .mode-box { margin-bottom: 8px; }
+  .corridor { margin-top: 10px; }
+  .foot { padding: 0 4px 4px; }
+  /* waypoint: [handle][input][radius chip][remove] on one line */
+  .stop-line { flex-wrap: nowrap; gap: 4px; }
+  .stop-line .field { flex: 1 1 0; min-width: 0; }
+  .stop-line .drag-handle { width: 32px; }
+  .stop-line .radius-btn { padding: 0 8px; height: 44px; }
+  .stop-line .icon-btn { width: 40px; height: 40px; }
+  /* search item: query on its own line, then min | max | remove */
+  .item { grid-template-columns: 1fr 1fr 44px; gap: 4px 8px; }
+  .item > :first-child { grid-column: 1 / -1; }
   .item .remove { margin-bottom: 0; }
-  .stop-line { flex-wrap: wrap; row-gap: 4px; }
-  .stop-line .field { flex: 1 1 calc(100% - 48px); }
-  .stop-line .radius-btn { margin-left: 44px; }
-  .stop-line .up { margin-left: auto; }
+  /* short mode labels */
+  .seg button .long { display: none; }
+  .seg button .short { display: inline; }
   /* map bubbles: as large as the bubble allows */
   .bubble .heart-btn, .bubble .chat-chip, .bubble .ka-btn { width: 30px; height: 30px; min-width: 30px; }
   .b-btns { grid-template-columns: repeat(2, 30px); }

@@ -76,6 +76,8 @@ jobs:
           cp "$src" "$out"
           apksigner=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -n1)
           "$apksigner" verify --verbose --print-certs "$out"
+          aapt2=$(ls "$ANDROID_HOME"/build-tools/*/aapt2 | sort -V | tail -n1)
+          "$aapt2" dump badging "$out" | grep -E "^(package|sdkVersion|targetSdkVersion|uses-permission|application-debuggable)" || true
           echo "file=$out" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v4

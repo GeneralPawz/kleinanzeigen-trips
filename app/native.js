@@ -22,7 +22,11 @@ if (Capacitor.isNativePlatform()) {
 
   // System bar colour follows the theme (<meta name=theme-color> is kept up to date by app.js)
   const meta = document.querySelector('meta[name=theme-color]');
-  const syncBars = () => Installer.setBarColor({ color: meta?.content || '#1D4B00' }).catch(() => {});
+  // header colour under the status bar, tab-bar surface under the navigation bar
+  const syncBars = () => {
+    const dark = document.documentElement.dataset.theme === 'dark';
+    Installer.setBarColor({ color: meta?.content || '#1D4B00', navColor: dark ? '#172015' : '#ffffff' }).catch(() => {});
+  };
   if (meta) new MutationObserver(syncBars).observe(meta, { attributes: true, attributeFilter: ['content'] });
   syncBars();
 }

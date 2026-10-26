@@ -71,19 +71,23 @@ public class InstallerPlugin extends Plugin {
         }
     }
 
-    /** Status/navigation bar colour (#RRGGBB) shown behind the padded WebView; icons contrast automatically. */
+    /**
+     * Icon contrast of the transparent system bars (the page draws under them): "color" is what the page shows
+     * under the status bar (header), "navColor" what it shows under the navigation bar (tab bar). Both #RRGGBB.
+     */
     @PluginMethod
     public void setBarColor(PluginCall call) {
-        String hex = call.getString("color", "#1D4B00");
+        String top = call.getString("color", "#1D4B00");
+        String bottom = call.getString("navColor", top);
         getActivity().runOnUiThread(() -> {
             try {
-                int c = android.graphics.Color.parseColor(hex);
+                int t = android.graphics.Color.parseColor(top);
+                int b = android.graphics.Color.parseColor(bottom);
                 Window w = getActivity().getWindow();
-                w.getDecorView().setBackgroundColor(c);
+                w.getDecorView().setBackgroundColor(b);
                 WindowInsetsControllerCompat ctl = WindowCompat.getInsetsController(w, w.getDecorView());
-                boolean light = ColorUtils.calculateLuminance(c) > 0.5;
-                ctl.setAppearanceLightStatusBars(light);
-                ctl.setAppearanceLightNavigationBars(light);
+                ctl.setAppearanceLightStatusBars(ColorUtils.calculateLuminance(t) > 0.5);
+                ctl.setAppearanceLightNavigationBars(ColorUtils.calculateLuminance(b) > 0.5);
                 call.resolve();
             } catch (IllegalArgumentException e) {
                 call.reject("ungültige Farbe");
