@@ -39,11 +39,7 @@ a { color: var(--green); }
   gap: 12px;
   z-index: 1100;
 }
-.brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.brand-mark { width: 30px; height: 30px; flex: none; }
-.brand h1 { margin: 0; font-size: 20px; line-height: 1.05; font-weight: 700; display: flex; flex-direction: column; }
-.brand h1 small { font-size: 11px; font-weight: 400; color: var(--lime); letter-spacing: .02em; }
-.account { color: var(--lime); font-size: 14px; font-weight: 600; text-decoration: none; white-space: nowrap; }
+.account { background: none; border: 0; padding: 4px 2px; cursor: pointer; color: var(--lime); font-size: 14px; font-weight: 600; text-decoration: none; white-space: nowrap; }
 .account:hover { color: #fff; text-decoration: underline; }
 .topbar :focus-visible { outline-color: #fff; }
 
@@ -179,8 +175,6 @@ progress { width: 100%; height: 10px; accent-color: var(--green); }
   .layout { flex-direction: column; }
   .map-wrap { order: -1; flex: none; height: 45vh; }
   .panel { width: 100%; flex: 1; border-right: 0; }
-  .brand h1 { font-size: 18px; }
-  .account { font-size: 13px; }
   .item { grid-template-columns: 1fr 64px 64px 30px; }
 }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }

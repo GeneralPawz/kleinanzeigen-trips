@@ -3,19 +3,44 @@ const L = window.L;
 
 const $ = (id) => document.getElementById(id);
 const PALETTE = ['#326916', '#E8590C', '#1C7ED6', '#B5E941', '#9C36B5', '#C2255C', '#0B7285', '#F08C00', '#1D4B00', '#5C940D'];
-const STORE_KEY = 'troedeltour.v1';
+const OLD_STORE_KEY = 'troedeltour.v1';
+const LAST_ROUTE_KEY = 'troedeltour.lastRoute';
 const DEBOUNCE_MS = 650;
+const SAVE_MS = 900;
 const POLL_MS = 1500;
+const RADII = [0, 5, 10, 20, 30, 50];
+const MAX_STOPS = 10;
+const BUBBLE_ZOOM = 12;
+const INBOX_URL = 'https://www.kleinanzeigen.de/m-nachrichten.html';
+const STATUS = {
+  none: { label: 'Kein Kontakt', chip: '' },
+  angeschrieben: { label: 'Angeschrieben', chip: 'angeschrieben' },
+  antwort: { label: 'Antwort erhalten', chip: 'Antwort' },
+  vereinbart: { label: 'Termin vereinbart', chip: 'vereinbart' },
+  abgeholt: { label: 'Abgeholt', chip: 'abgeholt' },
+  abgesagt: { label: 'Abgesagt', chip: 'abgesagt' },
+};
+const ICONS = {
+  heart: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>',
+  chat: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 2H4a2 2 0 0 0-2 2v18l4-4h14a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2z"/></svg>',
+};
 
 let uid = 0;
 const nextId = () => `n${++uid}`;
 
-/** @type {{stops: {id:string,text:string,point:{lat:number,lon:number}|null}[], items: {id:string,query:string,minPrice:string,maxPrice:string}[], corridor:number, route: any}} */
-const state = { stops: [], items: [], corridor: 20, route: null };
+/** @type {{stops: {id:string,text:string,point:{lat:number,lon:number}|null,radiusKm:number}[], items: {id:string,query:string,minPrice:string,maxPrice:string}[], corridor:number, route: any, routeId: string|null, routeName: string, nameAuto: boolean, searchedAt: string|null}} */
+const state = { stops: [], items: [], corridor: 20, route: null, routeId: null, routeName: '', nameAuto: true, searchedAt: null };
 let results = [];
+let resultsById = new Map();
+let shown = [];
 let filterQuery = null;
 let searchStatus = null;
 let pollTimer = null;
+let searchToken = 0;
+let selectedAdid = null;
+let merk = new Map(); // adid -> { adid, ad, routeId, savedAt }
+let contacts = {}; // adid -> { status, notes, updatedAt }
+let routesCache = [];
 
 // ---------- helpers ----------
 async function api(path, opts = {}) {
@@ -43,8 +68,20 @@ function el(tag, props = {}, ...children) {
   return node;
 }
 
+function icon(name) {
+  const t = document.createElement('template');
+  t.innerHTML = ICONS[name];
+  return t.content.firstElementChild;
+}
+
+const enc = encodeURIComponent;
 const safeUrl = (u) => (typeof u === 'string' && /^https?:\/\//i.test(u) ? u : null);
 const fmtKm = (n) => (Math.round(n * 10) / 10).toLocaleString('de-DE');
+const fmtDate = (iso) => {
+  const d = new Date(iso);
+  return isNaN(d) ? '' : d.toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' });
+};
+const shortLabel = (text) => String(text || '').split(',')[0].trim();
 function fmtDuration(min) {
   const h = Math.floor(min / 60), m = Math.round(min % 60);
   return h ? `${h} h ${m} min` : `${m} min`;
@@ -53,28 +90,78 @@ function showMsg(node, msg) {
   node.textContent = msg || '';
   node.hidden = !msg;
 }
-
-// ---------- persistence ----------
-function save() {
-  try {
-    localStorage.setItem(STORE_KEY, JSON.stringify({
-      stops: state.stops, items: state.items, corridor: state.corridor, route: state.route,
-    }));
-  } catch { /* storage unavailable */ }
+let toastTimer = null;
+function toast(msg, isErr = false) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.className = `toast${isErr ? ' err' : ''}`;
+  t.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.hidden = true; }, 4500);
 }
-function load() {
+
+function setResults(list) {
+  results = Array.isArray(list) ? list : [];
+  resultsById = new Map(results.map((r) => [r.adid, r]));
+}
+const adById = (adid) => resultsById.get(adid) || merk.get(adid)?.ad || null;
+const isNear = (r) => r && r.nearStop;
+
+// ---------- persistence (saved routes) ----------
+let dirty = false;
+let saveTimer = null;
+let saveChain = Promise.resolve();
+
+function autoName() {
+  const a = shortLabel(state.stops[0]?.text), b = shortLabel(state.stops[state.stops.length - 1]?.text);
+  return a && b ? `${a}–${b}` : '';
+}
+
+function numOrNull(v) { return v !== '' && v != null && isFinite(+v) ? +v : null; }
+
+function routePayload() {
+  return {
+    name: state.routeName.trim() || autoName() || 'Neue Route',
+    waypoints: state.stops.filter((s) => s.point).map((s) => ({ label: s.text, lat: s.point.lat, lon: s.point.lon, radiusKm: s.radiusKm || 0 })),
+    items: state.items.filter((i) => i.query.trim()).map((i) => ({ query: i.query.trim(), minPrice: numOrNull(i.minPrice), maxPrice: numOrNull(i.maxPrice) })),
+    corridorKm: state.corridor,
+    geometry: state.route ? state.route.geometry : null,
+    distanceKm: state.route ? state.route.distanceKm : null,
+    durationMin: state.route ? state.route.durationMin : null,
+    results,
+    searchedAt: state.searchedAt,
+  };
+}
+
+async function doSave() {
+  if (!dirty || (!state.routeId && !state.route)) return;
+  dirty = false;
   try {
-    const raw = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
-    if (!raw) return;
-    if (Array.isArray(raw.stops) && raw.stops.length >= 2) {
-      state.stops = raw.stops.map((s) => ({ id: nextId(), text: String(s.text || ''), point: s.point && isFinite(s.point.lat) ? s.point : null }));
+    const body = routePayload();
+    if (state.routeId) {
+      await api(`/api/routes/${enc(state.routeId)}`, { method: 'PUT', body });
+    } else {
+      const r = await api('/api/routes', { method: 'POST', body });
+      state.routeId = r.id;
+      localStorage.setItem(LAST_ROUTE_KEY, r.id);
     }
-    if (Array.isArray(raw.items) && raw.items.length) {
-      state.items = raw.items.map((i) => ({ id: nextId(), query: String(i.query || ''), minPrice: i.minPrice ?? '', maxPrice: i.maxPrice ?? '' }));
-    }
-    if (raw.corridor >= 5 && raw.corridor <= 50) state.corridor = raw.corridor;
-    if (raw.route && raw.route.geometry && raw.route.geometry.coordinates) state.route = raw.route;
-  } catch { /* corrupt storage */ }
+  } catch (e) {
+    dirty = true;
+    toast(`Route konnte nicht gespeichert werden: ${e.message}`, true);
+  }
+}
+
+/** Mark the current route as changed; saves after a short debounce (or immediately with `now`). */
+function persist(now = false) {
+  dirty = true;
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(flushSave, now ? 0 : SAVE_MS);
+}
+function flushSave() {
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  saveChain = saveChain.then(doSave);
+  return saveChain;
 }
 
 // ---------- map ----------
@@ -93,23 +180,30 @@ function endIcon(kind, label) {
   return L.divIcon({ className: '', html: `<div class="endpin ${kind}">${label}</div>`, iconSize: kind === 'via' ? [22, 22] : [30, 30], iconAnchor: kind === 'via' ? [11, 11] : [15, 15] });
 }
 
+const roleOf = (i, n) => (i === 0 ? 'Start' : i === n - 1 ? 'Ziel' : `Stopp ${i}`);
+
 function drawStops() {
   stopLayer.clearLayers();
-  const pts = state.stops.map((s, i) => ({ s, i })).filter((x) => x.s.point);
-  pts.forEach(({ s, i }) => {
-    const last = i === state.stops.length - 1;
+  const n = state.stops.length;
+  state.stops.forEach((s, i) => {
+    if (!s.point) return;
+    const last = i === n - 1;
     const kind = i === 0 ? 'start' : last ? 'end' : 'via';
     const label = i === 0 ? 'S' : last ? 'Z' : String(i);
-    const title = i === 0 ? 'Start' : last ? 'Ziel' : `Zwischenstopp ${i}`;
-    L.marker([s.point.lat, s.point.lon], { icon: endIcon(kind, label), title: `${title}: ${s.text}`, zIndexOffset: 500 }).addTo(stopLayer);
+    if (s.radiusKm > 0) {
+      L.circle([s.point.lat, s.point.lon], {
+        radius: s.radiusKm * 1000, color: '#326916', weight: 2, fillColor: '#B5E941', fillOpacity: 0.18, interactive: false,
+      }).addTo(stopLayer);
+    }
+    L.marker([s.point.lat, s.point.lon], { icon: endIcon(kind, label), title: `${roleOf(i, n)}: ${s.text}`, zIndexOffset: 500 }).addTo(stopLayer);
   });
 }
 
 function drawRoute(fit) {
   routeLayer.clearLayers();
   routeLine = null;
-  if (!state.route) return;
-  routeLine = L.geoJSON(state.route.geometry, { style: { color: '#1D4B00', weight: 5, opacity: .85 } }).addTo(routeLayer);
+  if (!state.route) { $('route-info').textContent = ''; return; }
+  routeLine = L.geoJSON(state.route.geometry, { style: { color: '#1D4B00', weight: 5, opacity: 0.85 } }).addTo(routeLayer);
   if (fit) map.fitBounds(routeLine.getBounds(), { padding: [30, 30] });
   $('route-info').textContent = `${fmtKm(state.route.distanceKm)} km · ${fmtDuration(state.route.durationMin)} Fahrzeit`;
 }
@@ -117,14 +211,16 @@ function drawRoute(fit) {
 // ---------- route inputs ----------
 const suggestState = { timers: new Map(), seq: new Map() };
 
-function newStop(text = '') { return { id: nextId(), text, point: null }; }
+function newStop(text = '') { return { id: nextId(), text, point: null, radiusKm: 0 }; }
+
+function radiusText(km) { return km ? `${km} km` : '– km'; }
 
 function renderStops() {
   const list = $('stops');
   list.replaceChildren();
   const n = state.stops.length;
   state.stops.forEach((stop, i) => {
-    const role = i === 0 ? 'Start' : i === n - 1 ? 'Ziel' : `Zwischenstopp ${i}`;
+    const role = roleOf(i, n);
     const inputId = `stop-${stop.id}`;
     const input = el('input', {
       type: 'text', id: inputId, value: stop.text, autocomplete: 'off', placeholder: i === 0 ? 'z. B. Hamburg' : i === n - 1 ? 'z. B. München' : 'Ort oder PLZ',
@@ -137,38 +233,46 @@ function renderStops() {
       stop.text = input.value;
       stop.point = null;
       input.classList.remove('resolved');
-      save();
       scheduleSuggest(stop, input, sug);
     });
     input.addEventListener('keydown', (e) => { if (e.key === 'Escape') sug.hidden = true; });
     input.addEventListener('blur', () => setTimeout(() => { if (!sug.contains(document.activeElement)) sug.hidden = true; }, 150));
 
+    const rb = el('button', {
+      type: 'button', id: `radius-${stop.id}`, class: `radius-btn${stop.radiusKm ? ' on' : ''}`,
+      'aria-label': `${role}: Suchumkreis ${stop.radiusKm ? `${stop.radiusKm} km` : 'aus'} – klicken zum Ändern`,
+      title: 'Suchumkreis um diesen Ort (aus, 5, 10, 20, 30, 50 km)', onclick: () => cycleRadius(stop),
+    }, `◎ ${radiusText(stop.radiusKm)}`);
     const up = el('button', { type: 'button', class: 'icon-btn', 'aria-label': `${role} nach oben`, title: 'Nach oben', text: '↑', disabled: i === 0, onclick: () => moveStop(i, -1) });
     const down = el('button', { type: 'button', class: 'icon-btn', 'aria-label': `${role} nach unten`, title: 'Nach unten', text: '↓', disabled: i === n - 1, onclick: () => moveStop(i, 1) });
     const rm = el('button', { type: 'button', class: 'icon-btn', 'aria-label': `${role} entfernen`, title: 'Entfernen', text: '×', disabled: n <= 2, onclick: () => removeStop(i) });
     list.append(el('li', { class: 'stop' },
       el('label', { for: inputId, text: role }),
-      el('div', { class: 'stop-line' }, el('div', { class: 'field' }, input, sug), up, down, rm)));
+      el('div', { class: 'stop-line' }, el('div', { class: 'field' }, input, sug), rb, up, down, rm)));
   });
+  $('add-stop').disabled = n >= MAX_STOPS;
   drawStops();
 }
 
+function cycleRadius(stop) {
+  stop.radiusKm = RADII[(RADII.indexOf(stop.radiusKm) + 1) % RADII.length];
+  renderStops();
+  $(`radius-${stop.id}`)?.focus();
+  persist();
+}
 function moveStop(i, d) {
   const j = i + d;
   if (j < 0 || j >= state.stops.length) return;
   [state.stops[i], state.stops[j]] = [state.stops[j], state.stops[i]];
-  invalidateRoute();
   renderStops();
-  save();
+  persist();
 }
 function removeStop(i) {
   if (state.stops.length <= 2) return;
   state.stops.splice(i, 1);
-  invalidateRoute();
   renderStops();
-  save();
+  persist();
 }
-function invalidateRoute() { /* keep drawn route until recalculated; info stays */ }
 
 function scheduleSuggest(stop, input, sug) {
   clearTimeout(suggestState.timers.get(stop.id));
@@ -178,7 +282,7 @@ function scheduleSuggest(stop, input, sug) {
     const seq = (suggestState.seq.get(stop.id) || 0) + 1;
     suggestState.seq.set(stop.id, seq);
     try {
-      const hits = await api(`/api/geocode?q=${encodeURIComponent(q)}`);
+      const hits = await api(`/api/geocode?q=${enc(q)}`);
       if (suggestState.seq.get(stop.id) !== seq || input.value.trim() !== q) return;
       sug.replaceChildren();
       if (!hits.length) sug.append(el('li', { class: 'none', text: 'Keine Treffer' }));
@@ -200,7 +304,6 @@ function applyGeocode(stop, input, h) {
   stop.point = { lat: h.lat, lon: h.lon };
   input.value = h.label;
   input.classList.add('resolved');
-  save();
   drawStops();
 }
 
@@ -215,7 +318,7 @@ async function calcRoute() {
       if (stop.point) continue;
       const q = stop.text.trim();
       if (!q) throw new Error('Bitte Start und Ziel ausfüllen.');
-      const hits = await api(`/api/geocode?q=${encodeURIComponent(q)}`);
+      const hits = await api(`/api/geocode?q=${enc(q)}`);
       if (!hits.length) throw new Error(`Ort nicht gefunden: „${q}“`);
       stop.point = { lat: hits[0].lat, lon: hits[0].lon };
       stop.text = hits[0].label;
@@ -224,8 +327,14 @@ async function calcRoute() {
     const waypoints = state.stops.map((s) => ({ lat: s.point.lat, lon: s.point.lon }));
     state.route = await api('/api/route', { method: 'POST', body: { waypoints } });
     clearResults();
+    state.searchedAt = null;
+    if (state.nameAuto || !state.routeName.trim()) {
+      state.routeName = autoName();
+      state.nameAuto = true;
+      $('route-name').value = state.routeName;
+    }
     drawRoute(true);
-    save();
+    persist(true);
   } catch (e) {
     showMsg(err, e.message);
   } finally {
@@ -235,6 +344,8 @@ async function calcRoute() {
 }
 
 // ---------- items ----------
+const blankItem = () => ({ id: nextId(), query: '', minPrice: '', maxPrice: '' });
+
 function renderItems() {
   const list = $('items');
   list.replaceChildren();
@@ -243,10 +354,10 @@ function renderItems() {
     const min = el('input', { type: 'number', id: `min-${item.id}`, value: item.minPrice, min: '0', inputmode: 'numeric', placeholder: '€' });
     const max = el('input', { type: 'number', id: `max-${item.id}`, value: item.maxPrice, min: '0', inputmode: 'numeric', placeholder: '€' });
     q.value = item.query; min.value = item.minPrice; max.value = item.maxPrice;
-    q.addEventListener('input', () => { item.query = q.value; save(); });
-    min.addEventListener('input', () => { item.minPrice = min.value; save(); });
-    max.addEventListener('input', () => { item.maxPrice = max.value; save(); });
-    const rm = el('button', { type: 'button', class: 'icon-btn remove', 'aria-label': `Suchbegriff ${i + 1} entfernen`, title: 'Entfernen', text: '×', disabled: state.items.length <= 1, onclick: () => { state.items.splice(i, 1); renderItems(); save(); } });
+    q.addEventListener('input', () => { item.query = q.value; persist(); });
+    min.addEventListener('input', () => { item.minPrice = min.value; persist(); });
+    max.addEventListener('input', () => { item.maxPrice = max.value; persist(); });
+    const rm = el('button', { type: 'button', class: 'icon-btn remove', 'aria-label': `Suchbegriff ${i + 1} entfernen`, title: 'Entfernen', text: '×', disabled: state.items.length <= 1, onclick: () => { state.items.splice(i, 1); renderItems(); persist(); } });
     list.append(el('li', { class: 'item' },
       el('div', {}, el('label', { for: q.id, text: `Gesuchter Artikel ${i + 1}` }), q),
       el('div', {}, el('label', { for: min.id, text: 'Min €' }), min),
@@ -264,9 +375,11 @@ const colorFor = (query) => {
 
 function clearResults() {
   stopPolling();
-  results = [];
+  searchToken++;
+  setResults([]);
   filterQuery = null;
   searchStatus = null;
+  selectedAdid = null;
   $('progress-wrap').hidden = true;
   showMsg($('blocked'), '');
   $('blocked').hidden = true;
@@ -288,7 +401,12 @@ async function startSearch() {
       return o;
     });
   if (!items.length) { showMsg(err, 'Bitte mindestens einen Suchbegriff eingeben.'); return; }
+  const stops = state.stops
+    .filter((s) => s.point && s.radiusKm > 0)
+    .map((s) => ({ label: shortLabel(s.text), lat: s.point.lat, lon: s.point.lon, radiusKm: s.radiusKm }));
   clearResults();
+  state.searchedAt = null;
+  const token = searchToken;
   const btn = $('search');
   btn.disabled = true;
   btn.textContent = 'Suche läuft…';
@@ -296,8 +414,11 @@ async function startSearch() {
   $('progress').removeAttribute('value');
   $('progress-text').textContent = 'Suche wird gestartet…';
   try {
-    const { jobId } = await api('/api/search', { method: 'POST', body: { geometry: state.route.geometry, corridorKm: state.corridor, items } });
-    poll(jobId);
+    const body = { geometry: state.route.geometry, corridorKm: state.corridor, items };
+    if (stops.length) body.stops = stops;
+    const { jobId } = await api('/api/search', { method: 'POST', body });
+    if (token !== searchToken) return;
+    poll(jobId, token);
   } catch (e) {
     showMsg(err, e.message);
     finishSearch();
@@ -310,9 +431,10 @@ function finishSearch() {
   btn.textContent = 'Entlang der Route suchen';
 }
 
-async function poll(jobId) {
+async function poll(jobId, token) {
   try {
-    const job = await api(`/api/search/${encodeURIComponent(jobId)}`);
+    const job = await api(`/api/search/${enc(jobId)}`);
+    if (token !== searchToken) return;
     searchStatus = job.status;
     const { done = 0, total = 0 } = job.progress || {};
     const bar = $('progress');
@@ -320,21 +442,25 @@ async function poll(jobId) {
     $('progress-text').textContent = job.status === 'running'
       ? `Suche ${done} von ${total || '?'} Abschnitten…`
       : job.status === 'done' ? `Fertig – ${job.results.length} Anzeigen gefunden.` : `${job.results.length} Anzeigen gefunden.`;
-    if (Array.isArray(job.results) && job.results.length !== results.length) {
-      results = job.results;
-      renderResults();
-    } else if (Array.isArray(job.results)) {
-      results = job.results;
+    if (Array.isArray(job.results)) {
+      const changed = job.results.length !== results.length;
+      setResults(job.results);
+      if (changed || job.status !== 'running') renderResults();
     }
     if (job.status === 'running') {
-      pollTimer = setTimeout(() => poll(jobId), POLL_MS);
+      pollTimer = setTimeout(() => poll(jobId, token), POLL_MS);
       return;
     }
     if (job.status === 'blocked') $('blocked').hidden = false;
     if (job.status === 'error') showMsg($('search-error'), job.error || 'Die Suche ist fehlgeschlagen.');
     if (job.status === 'done') bar.value = bar.max;
+    if (job.status === 'done' || job.status === 'blocked') {
+      state.searchedAt = new Date().toISOString();
+      persist(true);
+    }
     finishSearch();
   } catch (e) {
+    if (token !== searchToken) return;
     showMsg($('search-error'), e.message);
     finishSearch();
   }
@@ -357,7 +483,7 @@ function renderResults() {
   for (const q of queries) chips.append(mkChip(q, q, results.filter((r) => r.query === q).length, colorFor(q)));
   chips.hidden = queries.length < 2;
 
-  const shown = results.filter((r) => !filterQuery || r.query === filterQuery).sort((a, b) => a.kmAlongRoute - b.kmAlongRoute);
+  shown = results.filter((r) => !filterQuery || r.query === filterQuery).sort((a, b) => a.kmAlongRoute - b.kmAlongRoute);
   $('result-count').textContent = results.length ? `(${shown.length})` : '';
   const list = $('results');
   list.replaceChildren();
@@ -365,34 +491,75 @@ function renderResults() {
     list.append(el('li', { class: 'empty-note', text: searchStatus === 'running' ? 'Noch keine Treffer …' : 'Keine Anzeigen im Korridor gefunden.' }));
   }
   for (const r of shown) list.append(card(r));
-  drawAdMarkers(shown);
+  drawAdMarkers();
+}
+
+function priceNode(r, cls) {
+  let text = r.priceText || (r.price != null ? `${r.price} €` : 'Preis auf Anfrage');
+  const vb = r.vb || /\bVB\s*$/i.test(text);
+  text = text.replace(/\s*VB\s*$/i, '');
+  const node = el('div', { class: cls, text });
+  if (vb) node.append(el('span', { class: 'vb', text: 'VB' }));
+  return node;
+}
+
+function thumbNode(r, cls = 'thumb') {
+  const empty = () => el('div', { class: `${cls} empty`, text: cls === 'thumb' ? 'Kein Bild' : '' });
+  if (!safeUrl(r.image)) return empty();
+  const img = el('img', { class: cls, src: r.image, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' });
+  img.addEventListener('error', () => img.replaceWith(empty()));
+  return img;
+}
+
+function heartBtn(adid) {
+  const on = merk.has(adid);
+  return el('button', {
+    type: 'button', class: `heart-btn${on ? ' on' : ''}`, 'data-act': 'heart', 'aria-pressed': String(on), 'aria-label': 'Merkliste',
+    title: on ? 'Von der Merkliste entfernen' : 'Auf die Merkliste',
+    onclick: (e) => { e.stopPropagation(); toggleMerk(adid); },
+  }, icon('heart'));
+}
+
+function chatChip(adid) {
+  const st = contacts[adid]?.status || 'none';
+  return el('button', {
+    type: 'button', class: 'chat-chip', 'data-act': 'chat', 'data-status': st, 'aria-label': `Kontakt: ${STATUS[st].label}`,
+    title: `Kontakt: ${STATUS[st].label}`, onclick: (e) => { e.stopPropagation(); openContact(adid); },
+  }, icon('chat'), STATUS[st].chip ? el('span', { text: STATUS[st].chip }) : null);
+}
+
+function fillActions(box, r) {
+  const act = box.contains(document.activeElement) ? document.activeElement.dataset.act : null;
+  const link = safeUrl(r.url);
+  box.replaceChildren(
+    link ? el('a', { href: link, target: '_blank', rel: 'noopener noreferrer' }, 'Anzeige öffnen', el('span', { class: 'sr-only', text: ` – ${r.title}` })) : el('span'),
+    el('span', { class: 'spacer' }),
+    heartBtn(r.adid), chatChip(r.adid));
+  if (act) box.querySelector(`[data-act=${act}]`)?.focus();
 }
 
 function card(r) {
   const color = colorFor(r.query);
-  const img = safeUrl(r.image)
-    ? el('img', { class: 'thumb', src: r.image, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' })
-    : el('div', { class: 'thumb empty', text: 'Kein Bild' });
-  img.addEventListener?.('error', () => img.replaceWith(el('div', { class: 'thumb empty', text: 'Kein Bild' })));
-  const price = el('div', { class: 'price' }, r.priceText || (r.price != null ? `${r.price} €` : 'Preis auf Anfrage'));
-  if (r.vb && !/VB/i.test(r.priceText || '')) price.append(el('span', { class: 'vb', text: 'VB' }));
-  else if (r.vb) {
-    price.textContent = (r.priceText || '').replace(/\s*VB\s*$/i, '');
-    price.append(el('span', { class: 'vb', text: 'VB' }));
-  }
-  const link = safeUrl(r.url);
-  const actions = el('div', { class: 'actions' },
-    link ? el('a', { href: link, target: '_blank', rel: 'noopener noreferrer' }, 'Anzeige öffnen', el('span', { class: 'sr-only', style: 'position:absolute;left:-9999px', text: ` – ${r.title}` })) : null);
-  const li = el('li', { class: 'listing', id: `card-${r.adid}`, style: `--c:${color}` },
-    img,
-    el('div', {},
-      el('div', { class: 'tag', text: r.query }),
-      el('h3', { text: r.title }),
-      price,
-      el('div', { class: 'meta', text: `${[r.plz, r.city].filter(Boolean).join(' ')}` }),
-      el('div', { class: 'meta', text: `km ${Math.round(r.kmAlongRoute)} der Route · ${fmtKm(r.distanceToRouteKm)} km abseits` }),
-      r.date ? el('div', { class: 'meta', text: r.date }) : null,
-      actions));
+  const actions = el('div', { class: 'actions' });
+  fillActions(actions, r);
+  const li = el('li', {
+    class: `listing${merk.has(r.adid) ? ' remembered' : ''}${r.adid === selectedAdid ? ' sel' : ''}`, id: `card-${r.adid}`, style: `--c:${color}`,
+    tabindex: '0', title: 'Auf der Karte zeigen',
+  },
+  thumbNode(r),
+  el('div', {},
+    el('div', { class: 'tag', text: r.query }),
+    el('h3', { text: r.title }),
+    priceNode(r, 'price'),
+    el('div', { class: 'meta', text: `${[r.plz, r.city].filter(Boolean).join(' ')}` }),
+    el('div', { class: 'meta', text: `km ${Math.round(r.kmAlongRoute)} der Route · ${fmtKm(r.distanceToRouteKm)} km abseits` }),
+    isNear(r) ? el('div', { class: 'meta near', text: `in der Nähe von ${r.nearStop}${r.distanceToStopKm != null ? ` (${fmtKm(r.distanceToStopKm)} km)` : ''}` }) : null,
+    r.date ? el('div', { class: 'meta', text: r.date }) : null,
+    actions));
+  li.addEventListener('click', (e) => { if (!e.target.closest('a, button, input, select, textarea')) selectAd(r.adid); });
+  li.addEventListener('keydown', (e) => {
+    if ((e.key === 'Enter' || e.key === ' ') && e.target === li) { e.preventDefault(); selectAd(r.adid); }
+  });
   li.addEventListener('mouseenter', () => highlight(r.adid, true));
   li.addEventListener('mouseleave', () => highlight(r.adid, false));
   li.addEventListener('focusin', () => highlight(r.adid, true));
@@ -400,21 +567,62 @@ function card(r) {
   return li;
 }
 
+/** Re-sync card, pin, contact aside and Merkliste after merk/contact data of one ad changed. */
+function onAdChanged(adid) {
+  const r = adById(adid);
+  const li = $(`card-${adid}`);
+  if (li && r) {
+    li.classList.toggle('remembered', merk.has(adid));
+    fillActions(li.querySelector('.actions'), r);
+  }
+  const m = markers.get(adid);
+  if (m && resultsById.has(adid)) m.setIcon(iconFor(resultsById.get(adid)));
+  updateMerkCount();
+  if (activeOverlay === 'contact' && contactAdid === adid) syncAside();
+  if (activeOverlay === 'nav' && currentTab === 'merk') renderMerk();
+}
+
 // ---------- ad markers ----------
 function highlight(adid, on) {
   const m = markers.get(adid);
   if (!m) return;
-  const node = m.getElement()?.querySelector('.pin');
-  if (node) node.classList.toggle('hl', on);
-  m.setZIndexOffset(on ? 1000 : 0);
-  const c = document.getElementById(`card-${adid}`);
+  m.getElement()?.querySelector('.pin, .bubble')?.classList.toggle('hl', on);
+  m.setZIndexOffset(on || adid === selectedAdid ? 1000 : 0);
+  const c = $(`card-${adid}`);
   if (c && !on) c.classList.remove('hl');
 }
 
-function drawAdMarkers(shown) {
+const bubbleWidth = () => (window.innerWidth < 800 ? 196 : 224);
+const bubbleMode = () => map.getZoom() >= BUBBLE_ZOOM;
+
+function dotIcon(r) {
+  const remembered = merk.has(r.adid);
+  const dot = el('div', { class: `pin${r.adid === selectedAdid ? ' sel' : ''}`, style: `--c:${colorFor(r.query)}` });
+  if (remembered) dot.append(el('span', { class: 'pin-heart' }, icon('heart')));
+  return L.divIcon({ className: '', html: dot, iconSize: [22, 22], iconAnchor: [11, 11] });
+}
+
+function bubbleIcon(r) {
+  const remembered = merk.has(r.adid);
+  const w = bubbleWidth();
+  const btns = el('div', { class: 'b-btns' }, heartBtn(r.adid), chatChip(r.adid));
+  L.DomEvent.disableClickPropagation(btns);
+  const box = el('div', { class: `bubble${remembered ? ' remembered' : ''}${r.adid === selectedAdid ? ' sel' : ''}` },
+    thumbNode(r, 'b-thumb'),
+    el('div', { class: 'b-main' }, el('div', { class: 'b-title', text: r.title }), priceNode(r, 'b-price')),
+    btns,
+    remembered ? el('span', { class: 'b-badge' }, icon('heart')) : null);
+  const root = el('div', { class: 'bubble-root', style: `width:${w}px;--c:${colorFor(r.query)}` }, box, el('div', { class: 'tail' }));
+  return L.divIcon({ className: '', html: root, iconSize: [w, 62], iconAnchor: [w / 2, 62] });
+}
+
+const iconFor = (r) => (bubbleMode() ? bubbleIcon(r) : dotIcon(r));
+
+function drawAdMarkers() {
   adLayer.clearLayers();
   markers.clear();
   const seen = new Map();
+  const bubbles = bubbleMode();
   for (const r of shown) {
     if (typeof r.lat !== 'number' || typeof r.lon !== 'number') continue;
     const key = `${r.lat.toFixed(4)},${r.lon.toFixed(4)}`;
@@ -426,51 +634,464 @@ function drawAdMarkers(shown) {
       lat += Math.sin(ang) * rad;
       lon += Math.cos(ang) * rad * 1.5;
     }
-    const icon = L.divIcon({ className: '', html: `<div class="pin" style="--c:${colorFor(r.query)}"></div>`, iconSize: [22, 22], iconAnchor: [11, 11] });
-    const m = L.marker([lat, lon], { icon, title: r.title, keyboard: false }).addTo(adLayer);
-    m.bindTooltip(`${r.title} – ${r.priceText || ''}`, { direction: 'top', offset: [0, -10] });
+    const m = L.marker([lat, lon], { icon: iconFor(r), title: bubbles ? undefined : r.title, keyboard: false, zIndexOffset: r.adid === selectedAdid ? 1000 : 0 }).addTo(adLayer);
+    if (!bubbles) m.bindTooltip(`${r.title} – ${r.priceText || ''}`, { direction: 'top', offset: [0, -10] });
     m.on('click', () => {
-      const c = document.getElementById(`card-${r.adid}`);
+      selectedAdid = r.adid;
+      applySelection();
+      const c = $(`card-${r.adid}`);
       if (!c) return;
       c.scrollIntoView({ behavior: 'smooth', block: 'center' });
       c.classList.remove('flash'); void c.offsetWidth; c.classList.add('flash');
     });
-    m.on('mouseover', () => document.getElementById(`card-${r.adid}`)?.classList.add('hl'));
-    m.on('mouseout', () => document.getElementById(`card-${r.adid}`)?.classList.remove('hl'));
+    m.on('mouseover', () => $(`card-${r.adid}`)?.classList.add('hl'));
+    m.on('mouseout', () => $(`card-${r.adid}`)?.classList.remove('hl'));
     markers.set(r.adid, m);
   }
 }
 
-// ---------- init ----------
-function init() {
-  load();
-  if (state.stops.length < 2) state.stops = [newStop(), newStop()];
-  if (!state.items.length) state.items = [{ id: nextId(), query: '', minPrice: '', maxPrice: '' }];
-  renderStops();
-  renderItems();
+function applySelection() {
+  document.querySelectorAll('.listing.sel').forEach((n) => n.classList.remove('sel'));
+  if (selectedAdid) $(`card-${selectedAdid}`)?.classList.add('sel');
+  for (const [adid, m] of markers) {
+    const on = adid === selectedAdid;
+    m.getElement()?.querySelector('.pin, .bubble')?.classList.toggle('sel', on);
+    m.setZIndexOffset(on ? 1000 : 0);
+  }
+}
+
+/** Show an ad on the map: fly to its pin (zoom 14) where the bubble opens, mark its card. */
+function selectAd(adid, { fly = true } = {}) {
+  const r = resultsById.get(adid);
+  if (!r) return;
+  selectedAdid = adid;
+  if (filterQuery && r.query !== filterQuery) { filterQuery = null; renderResults(); }
+  applySelection();
+  const m = markers.get(adid);
+  if (m && fly) map.flyTo(m.getLatLng(), 14, { duration: 0.8 });
+}
+
+map.on('zoomend', () => { drawAdMarkers(); applySelection(); });
+
+// ---------- Merkliste (app-local) ----------
+function updateMerkCount() {
+  const b = $('merk-count');
+  b.textContent = merk.size ? String(merk.size) : '';
+  b.hidden = !merk.size;
+}
+
+async function loadMerk() {
+  try {
+    const list = await api('/api/merkliste');
+    merk = new Map(list.map((e) => [e.adid, e]));
+  } catch (e) { toast(`Merkliste konnte nicht geladen werden: ${e.message}`, true); }
+  updateMerkCount();
+}
+async function loadContacts() {
+  try { contacts = (await api('/api/contacts')) || {}; } catch (e) { toast(`Kontakte konnten nicht geladen werden: ${e.message}`, true); }
+}
+
+async function addMerk(ad, routeId) {
+  if (routeId === undefined) { await flushSave(); routeId = state.routeId; }
+  merk.set(ad.adid, await api(`/api/merkliste/${enc(ad.adid)}`, { method: 'PUT', body: { ad, routeId: routeId || null } }));
+}
+
+async function toggleMerk(adid) {
+  const ad = adById(adid);
+  if (!ad) return;
+  try {
+    if (merk.has(adid)) {
+      await api(`/api/merkliste/${enc(adid)}`, { method: 'DELETE' });
+      merk.delete(adid);
+    } else {
+      await addMerk(ad);
+    }
+  } catch (e) { toast(e.message, true); }
+  onAdChanged(adid);
+}
+
+// ---------- contacts ----------
+async function setStatus(adid, status) {
+  try {
+    contacts[adid] = await api(`/api/contacts/${enc(adid)}`, { method: 'PUT', body: { status } });
+    if (status !== 'none' && !merk.has(adid)) { const ad = adById(adid); if (ad) await addMerk(ad); }
+  } catch (e) { toast(e.message, true); }
+  onAdChanged(adid);
+}
+
+async function addNote(adid, text) {
+  try {
+    const note = await api(`/api/contacts/${enc(adid)}/notes`, { method: 'POST', body: { text } });
+    const c = contacts[adid] || (contacts[adid] = { status: 'none', notes: [], updatedAt: note.at });
+    c.notes = [...(c.notes || []), note];
+    return true;
+  } catch (e) { toast(e.message, true); return false; } finally { onAdChanged(adid); }
+}
+
+async function delNote(adid, noteId) {
+  try {
+    await api(`/api/contacts/${enc(adid)}/notes/${enc(noteId)}`, { method: 'DELETE' });
+    const c = contacts[adid];
+    if (c) c.notes = c.notes.filter((n) => n.id !== noteId);
+  } catch (e) { toast(e.message, true); }
+  onAdChanged(adid);
+}
+
+// ---------- slide-overs ----------
+const overlays = { nav: $('nav-drawer'), contact: $('contact-aside') };
+let activeOverlay = null;
+let lastFocus = null;
+let contactAdid = null;
+let currentTab = 'routes';
+
+const focusables = (root) => [...root.querySelectorAll('a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+  .filter((n) => !n.disabled && !n.hidden && n.offsetParent !== null);
+
+function openOverlay(name) {
+  if (activeOverlay === name) return;
+  if (activeOverlay) closeOverlay(false);
+  else lastFocus = document.activeElement;
+  activeOverlay = name;
+  overlays[name].classList.add('open');
+  $('backdrop').classList.add('open');
+  setTimeout(() => overlays[name].querySelector('.drawer-head .icon-btn')?.focus(), 30);
+}
+
+function closeOverlay(restore = true) {
+  if (!activeOverlay) return;
+  overlays[activeOverlay].classList.remove('open');
+  $('backdrop').classList.remove('open');
+  activeOverlay = null;
+  if (restore && lastFocus && document.contains(lastFocus)) lastFocus.focus();
+}
+
+document.addEventListener('keydown', (e) => {
+  if (!activeOverlay) return;
+  if (e.key === 'Escape') { e.preventDefault(); closeOverlay(); return; }
+  if (e.key !== 'Tab') return;
+  const f = focusables(overlays[activeOverlay]);
+  if (!f.length) return;
+  const first = f[0], last = f[f.length - 1];
+  if (!overlays[activeOverlay].contains(document.activeElement)) { e.preventDefault(); first.focus(); }
+  else if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+});
+
+// ---------- nav drawer: routes + Merkliste ----------
+let renamingId = null;
+let confirmingId = null;
+
+function setTab(tab) {
+  currentTab = tab;
+  for (const t of ['routes', 'merk']) {
+    $(`tab-${t}`).setAttribute('aria-selected', String(t === tab));
+    $(`panel-${t}`).hidden = t !== tab;
+  }
+  if (tab === 'routes') renderRoutes(); else renderMerk();
+}
+
+async function openNav(tab) {
+  openOverlay('nav');
+  setTab(tab);
+}
+
+async function renderRoutes() {
+  const list = $('route-list');
+  try {
+    await flushSave();
+    routesCache = await api('/api/routes');
+  } catch (e) { toast(e.message, true); return; }
+  list.replaceChildren();
+  if (!routesCache.length) list.append(el('li', { class: 'empty-note', text: 'Noch keine gespeicherten Routen. Berechne eine Route – sie wird automatisch gespeichert.' }));
+  for (const r of routesCache) {
+    const li = el('li', { class: `route-item${r.id === state.routeId ? ' current' : ''}` });
+    if (renamingId === r.id) {
+      const input = el('input', { type: 'text', value: r.name, maxlength: '120', 'aria-label': 'Neuer Routenname' });
+      input.value = r.name;
+      const commit = () => renameRoute(r.id, input.value);
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') commit();
+        if (e.key === 'Escape') { e.stopPropagation(); renamingId = null; renderRoutes(); }
+      });
+      li.append(input,
+        el('button', { type: 'button', class: 'btn btn-primary btn-small', text: 'Speichern', onclick: commit }),
+        el('button', { type: 'button', class: 'btn btn-ghost btn-small', text: 'Abbrechen', onclick: () => { renamingId = null; renderRoutes(); } }));
+      setTimeout(() => { input.focus(); input.select(); }, 0);
+    } else {
+      li.append(
+        el('button', { type: 'button', class: 'route-open', 'aria-current': r.id === state.routeId ? 'true' : null, onclick: () => openRoute(r.id) },
+          el('b', { text: r.name }), el('small', { text: `Geändert ${fmtDate(r.updatedAt)}` })),
+        el('button', { type: 'button', class: 'icon-btn', 'aria-label': `Route „${r.name}“ umbenennen`, title: 'Umbenennen', text: '✎', onclick: () => { renamingId = r.id; confirmingId = null; renderRoutes(); } }),
+        el('button', { type: 'button', class: 'icon-btn', 'aria-label': `Route „${r.name}“ löschen`, title: 'Löschen', text: '🗑', onclick: () => { confirmingId = r.id; renamingId = null; renderRoutes(); } }));
+      if (confirmingId === r.id) {
+        li.append(el('div', { class: 'confirm', role: 'group', 'aria-label': 'Löschen bestätigen' },
+          el('span', { text: `„${r.name}“ wirklich löschen?` }),
+          el('button', { type: 'button', class: 'btn btn-danger btn-small', text: 'Ja, löschen', onclick: () => deleteRoute(r.id) }),
+          el('button', { type: 'button', class: 'btn btn-ghost btn-small', text: 'Abbrechen', onclick: () => { confirmingId = null; renderRoutes(); } })));
+      }
+    }
+    list.append(li);
+  }
+}
+
+async function renameRoute(id, name) {
+  name = name.trim();
+  if (!name) return;
+  try {
+    await api(`/api/routes/${enc(id)}`, { method: 'PUT', body: { name } });
+    if (id === state.routeId) { state.routeName = name; state.nameAuto = false; $('route-name').value = name; }
+  } catch (e) { toast(e.message, true); }
+  renamingId = null;
+  renderRoutes();
+}
+
+async function deleteRoute(id) {
+  try {
+    await api(`/api/routes/${enc(id)}`, { method: 'DELETE' });
+    confirmingId = null;
+    if (id === state.routeId) {
+      dirty = false;
+      const rest = (await api('/api/routes'))[0];
+      if (rest) applyRoute(await api(`/api/routes/${enc(rest.id)}`)); else applyBlank();
+    }
+  } catch (e) { toast(e.message, true); }
+  renderRoutes();
+}
+
+async function openRoute(id) {
+  try {
+    await flushSave();
+    if (id !== state.routeId) applyRoute(await api(`/api/routes/${enc(id)}`));
+    closeOverlay();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function newRoute() {
+  try {
+    await flushSave();
+    const r = await api('/api/routes', { method: 'POST', body: { name: 'Neue Route' } });
+    applyRoute(r);
+    state.nameAuto = true;
+    map.setView([51.16, 10.45], 6);
+    closeOverlay();
+    $('route-name').value = '';
+    $(`stop-${state.stops[0].id}`)?.focus();
+  } catch (e) { toast(e.message, true); }
+}
+
+function renderMerk() {
+  const box = $('merk-list');
+  box.replaceChildren();
+  const entries = [...merk.values()].sort((a, b) => String(b.savedAt).localeCompare(String(a.savedAt)));
+  if (!entries.length) { box.append(el('p', { class: 'empty-note', text: 'Noch nichts gemerkt. Mit ♥ an einer Anzeige legst du sie hier ab.' })); return; }
+  const names = new Map(routesCache.map((r) => [r.id, r.name]));
+  if (state.routeId) names.set(state.routeId, state.routeName.trim() || autoName() || 'Aktuelle Route');
+  const groups = new Map();
+  for (const e of entries) {
+    const key = e.routeId && names.has(e.routeId) ? e.routeId : '';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(e);
+  }
+  const order = [...groups.keys()].sort((a, b) => (a === state.routeId ? -1 : b === state.routeId ? 1 : a === '' ? 1 : b === '' ? -1 : names.get(a).localeCompare(names.get(b), 'de')));
+  for (const key of order) {
+    box.append(el('h3', { class: 'group-title', text: `${key ? names.get(key) : 'Ohne Route'}${key === state.routeId ? ' (aktuell)' : ''}` }));
+    for (const e of groups.get(key)) {
+      const ad = e.ad || {};
+      const onMap = key === state.routeId && resultsById.has(e.adid);
+      const link = safeUrl(ad.url);
+      box.append(el('div', { class: 'merk-item' },
+        thumbNode(ad),
+        el('div', {},
+          el('h4', { text: ad.title || e.adid }),
+          priceNode(ad, 'price'),
+          el('div', { class: 'meta', text: [ad.plz, ad.city].filter(Boolean).join(' ') }),
+          el('div', { class: 'actions' },
+            onMap ? el('button', { type: 'button', class: 'btn btn-small btn-ghost', text: 'auf Karte zeigen', onclick: () => { closeOverlay(); selectAd(e.adid); } }) : null,
+            link ? el('a', { href: link, target: '_blank', rel: 'noopener noreferrer', text: 'Anzeige ↗' }) : null,
+            el('span', { class: 'spacer' }),
+            heartBtn(e.adid), chatChip(e.adid)))));
+    }
+  }
+}
+
+// ---------- contact aside ----------
+let noteDrafts = {};
+
+function openContact(adid) {
+  const ad = adById(adid);
+  if (!ad) return;
+  contactAdid = adid;
+  const body = $('contact-body');
+  body.replaceChildren();
+  const link = safeUrl(ad.url);
+
+  const select = el('select', { id: 'contact-status' },
+    ...Object.entries(STATUS).map(([k, v]) => el('option', { value: k, text: v.label })));
+  select.addEventListener('change', () => setStatus(adid, select.value));
+  const ta = el('textarea', { id: 'note-text', maxlength: '2000', placeholder: 'Notiz hinzufügen (z. B. Abholzeit, Adresse, Text aus dem Chat)', 'aria-label': 'Notiz hinzufügen' });
+  ta.value = noteDrafts[adid] || '';
+  ta.addEventListener('input', () => { noteDrafts[adid] = ta.value; });
+  const submit = async () => {
+    const text = ta.value.trim();
+    if (!text) return;
+    if (await addNote(adid, text)) { ta.value = ''; noteDrafts[adid] = ''; }
+  };
+  ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); submit(); } });
+
+  body.append(
+    el('div', { class: 'c-summary' },
+      thumbNode(ad),
+      el('div', {}, el('h3', { text: ad.title }), priceNode(ad, 'price'),
+        el('div', { class: 'meta', text: [ad.plz, ad.city].filter(Boolean).join(' ') }),
+        el('div', { class: 'actions', id: 'aside-heart' }))),
+    el('div', { class: 'c-field' }, el('label', { for: 'contact-status', text: 'Status' }), select),
+    el('div', { class: 'c-field' }, el('h3', { text: 'Notizen' }), el('ul', { class: 'notes', id: 'notes-list', 'aria-label': 'Notizen' }),
+      ta, el('button', { type: 'button', class: 'btn btn-primary btn-small', id: 'note-add', text: 'Notiz speichern', onclick: submit })),
+    el('div', { class: 'c-actions' },
+      link ? el('a', { class: 'btn btn-primary', href: link, target: '_blank', rel: 'noopener noreferrer', text: 'Verkäufer auf Kleinanzeigen schreiben' }) : null,
+      el('a', { class: 'btn', href: INBOX_URL, target: '_blank', rel: 'noopener noreferrer', text: 'Kleinanzeigen-Nachrichten öffnen' })),
+    el('p', { class: 'c-note', text: 'Die App liest deine Kleinanzeigen-Nachrichten nicht – halte hier fest, was vereinbart ist.' }));
+  syncAside();
+  openOverlay('contact');
+}
+
+function syncAside() {
+  const adid = contactAdid;
+  const c = contacts[adid] || { status: 'none', notes: [] };
+  const select = $('contact-status');
+  if (!select) return;
+  select.value = c.status;
+  const hb = $('aside-heart');
+  hb.replaceChildren(heartBtn(adid), el('span', { class: 'meta', text: merk.has(adid) ? 'auf der Merkliste' : 'nicht gemerkt' }));
+  const list = $('notes-list');
+  list.replaceChildren();
+  const notes = c.notes || [];
+  if (!notes.length) list.append(el('li', {}, el('span', { class: 'txt meta', text: 'Noch keine Notizen.' })));
+  for (const n of notes) {
+    list.append(el('li', {},
+      el('span', { class: 'txt', text: n.text }),
+      el('button', { type: 'button', class: 'icon-btn', 'aria-label': 'Notiz löschen', title: 'Notiz löschen', text: '×', onclick: () => delNote(adid, n.id) }),
+      el('time', { datetime: n.at, text: fmtDate(n.at) })));
+  }
+}
+
+// ---------- apply a route to the UI ----------
+function applyRoute(r) {
+  stopPolling();
+  searchToken++;
+  dirty = false;
+  clearTimeout(saveTimer);
+  state.routeId = r.id || null;
+  state.routeName = r.name || '';
+  state.nameAuto = !r.id;
+  state.stops = (r.waypoints || []).map((w) => ({ id: nextId(), text: w.label || '', point: { lat: w.lat, lon: w.lon }, radiusKm: w.radiusKm || 0 }));
+  while (state.stops.length < 2) state.stops.push(newStop());
+  state.items = (r.items || []).map((i) => ({ id: nextId(), query: i.query, minPrice: i.minPrice ?? '', maxPrice: i.maxPrice ?? '' }));
+  if (!state.items.length) state.items = [blankItem()];
+  state.corridor = Math.min(50, Math.max(5, Math.round(r.corridorKm || 20)));
+  state.route = r.geometry && r.geometry.coordinates ? { geometry: r.geometry, distanceKm: r.distanceKm, durationMin: r.durationMin } : null;
+  state.searchedAt = r.searchedAt || null;
+  setResults(r.results);
+  filterQuery = null;
+  selectedAdid = null;
+  searchStatus = state.searchedAt || results.length ? 'done' : null;
+  if (r.id) localStorage.setItem(LAST_ROUTE_KEY, r.id); else localStorage.removeItem(LAST_ROUTE_KEY);
+
+  $('route-name').value = state.routeName;
   $('corridor').value = state.corridor;
   $('corridor-out').textContent = `${state.corridor} km`;
+  showMsg($('route-error'), '');
+  showMsg($('search-error'), '');
+  $('blocked').hidden = true;
+  finishSearch();
+  const pw = $('progress-wrap');
+  pw.hidden = !state.searchedAt;
+  if (state.searchedAt) {
+    $('progress').max = 1; $('progress').value = 1;
+    $('progress-text').textContent = `Gespeicherte Ergebnisse vom ${fmtDate(state.searchedAt)} – ${results.length} Anzeigen.`;
+  }
+  renderStops();
+  renderItems();
+  drawRoute(true);
+  renderResults();
+}
+
+function applyBlank() {
+  applyRoute({ id: null, name: '', waypoints: [], items: [], corridorKm: 20, geometry: null, results: [], searchedAt: null });
+  map.setView([51.16, 10.45], 6);
+}
+
+// ---------- old localStorage route -> saved route (once) ----------
+async function migrateOld() {
+  let raw = null;
+  try { raw = JSON.parse(localStorage.getItem(OLD_STORE_KEY) || 'null'); } catch { /* corrupt */ }
+  if (!raw) { localStorage.removeItem(OLD_STORE_KEY); return null; }
+  const waypoints = (Array.isArray(raw.stops) ? raw.stops : [])
+    .filter((s) => s && s.point && isFinite(s.point.lat) && isFinite(s.point.lon))
+    .map((s) => ({ label: String(s.text || ''), lat: s.point.lat, lon: s.point.lon, radiusKm: 0 }));
+  const items = (Array.isArray(raw.items) ? raw.items : []).filter((i) => i && String(i.query || '').trim())
+    .map((i) => ({ query: String(i.query).trim(), minPrice: numOrNull(i.minPrice), maxPrice: numOrNull(i.maxPrice) }));
+  const geo = raw.route && raw.route.geometry && raw.route.geometry.type === 'LineString' ? raw.route : null;
+  if (!waypoints.length && !items.length) { localStorage.removeItem(OLD_STORE_KEY); return null; }
+  const name = waypoints.length >= 2 ? `${shortLabel(waypoints[0].label)}–${shortLabel(waypoints[waypoints.length - 1].label)}` : 'Importierte Route';
+  try {
+    const r = await api('/api/routes', {
+      method: 'POST',
+      body: {
+        name, waypoints, items, corridorKm: raw.corridor >= 5 && raw.corridor <= 50 ? raw.corridor : 20,
+        geometry: geo ? geo.geometry : null, distanceKm: geo ? geo.distanceKm : null, durationMin: geo ? geo.durationMin : null,
+      },
+    });
+    localStorage.removeItem(OLD_STORE_KEY);
+    return r;
+  } catch { return null; /* keep the old data and retry on next start */ }
+}
+
+// ---------- init ----------
+async function init() {
+  const savedLastId = localStorage.getItem(LAST_ROUTE_KEY);
+  applyBlank();
   $('corridor').addEventListener('input', (e) => {
     state.corridor = +e.target.value;
     $('corridor-out').textContent = `${state.corridor} km`;
-    save();
+    persist();
   });
   $('add-stop').addEventListener('click', () => {
-    state.stops.splice(state.stops.length - 1, 0, newStop());
-    if (state.stops.length > 10) state.stops.splice(state.stops.length - 2, 1);
+    if (state.stops.length >= MAX_STOPS) return;
+    state.stops.push(newStop());
     renderStops();
-    document.getElementById(`stop-${state.stops[state.stops.length - 2].id}`)?.focus();
-    save();
+    $(`stop-${state.stops[state.stops.length - 1].id}`)?.focus();
+    persist();
   });
   $('add-item').addEventListener('click', () => {
-    state.items.push({ id: nextId(), query: '', minPrice: '', maxPrice: '' });
+    state.items.push(blankItem());
     renderItems();
-    document.getElementById(`q-${state.items[state.items.length - 1].id}`)?.focus();
-    save();
+    $(`q-${state.items[state.items.length - 1].id}`)?.focus();
+    persist();
   });
   $('calc-route').addEventListener('click', calcRoute);
   $('search').addEventListener('click', startSearch);
-  drawRoute(true);
+  $('route-name').addEventListener('input', (e) => { state.routeName = e.target.value; state.nameAuto = false; persist(); });
+  $('brand-btn').addEventListener('click', () => openNav('routes'));
+  $('open-merk').addEventListener('click', () => openNav('merk'));
+  $('nav-close').addEventListener('click', () => closeOverlay());
+  $('contact-close').addEventListener('click', () => closeOverlay());
+  $('backdrop').addEventListener('click', () => closeOverlay());
+  $('tab-routes').addEventListener('click', () => setTab('routes'));
+  $('tab-merk').addEventListener('click', () => setTab('merk'));
+  $('new-route').addEventListener('click', newRoute);
+  window.addEventListener('pagehide', () => { if (dirty) flushSave(); });
+
+  await Promise.all([loadMerk(), loadContacts()]);
+  try {
+    const migrated = await migrateOld();
+    const list = await api('/api/routes');
+    routesCache = list;
+    const lastId = migrated ? migrated.id : savedLastId;
+    const pick = list.find((r) => r.id === lastId) || list[0];
+    if (pick) applyRoute(migrated && migrated.id === pick.id ? migrated : await api(`/api/routes/${enc(pick.id)}`));
+  } catch (e) { toast(`Routen konnten nicht geladen werden: ${e.message}`, true); }
+  document.body.dataset.ready = '1';
 }
 
 init();

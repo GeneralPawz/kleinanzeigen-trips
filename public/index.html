@@ -9,14 +9,24 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
     integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
   <link rel="stylesheet" href="app.css">
+  <link rel="stylesheet" href="panels.css">
 </head>
 <body>
   <header class="topbar">
-    <div class="brand">
-      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="16" fill="#B5E941"/><path d="M16 5a7 7 0 0 0-7 7c0 5 7 13 7 13s7-8 7-13a7 7 0 0 0-7-7zm0 9.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5z" fill="#1D4B00"/></svg>
-      <h1>Trödeltour<small>für Kleinanzeigen</small></h1>
+    <h1 class="brand">
+      <button type="button" id="brand-btn" class="brand-btn" aria-haspopup="dialog" aria-controls="nav-drawer" title="Routen und Merkliste">
+        <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="16" fill="#B5E941"/><path d="M16 5a7 7 0 0 0-7 7c0 5 7 13 7 13s7-8 7-13a7 7 0 0 0-7-7zm0 9.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5z" fill="#1D4B00"/></svg>
+        <span class="brand-title">Trödeltour<small>für Kleinanzeigen</small></span>
+      </button>
+    </h1>
+    <div class="route-name-wrap">
+      <label class="sr-only" for="route-name">Name der Route</label>
+      <input type="text" id="route-name" maxlength="120" placeholder="Unbenannte Route" autocomplete="off">
     </div>
-    <a class="account" href="https://www.kleinanzeigen.de/m-merkliste.html" target="_blank" rel="noopener">Meine Merkliste ↗</a>
+    <nav class="top-actions" aria-label="Merkliste">
+      <button type="button" id="open-merk" class="account"><span class="long">Meine </span>Merkliste <span id="merk-count" class="badge" hidden></span></button>
+      <a class="account ext" href="https://www.kleinanzeigen.de/m-merkliste.html" target="_blank" rel="noopener" title="Merkliste auf Kleinanzeigen öffnen" aria-label="Merkliste auf Kleinanzeigen öffnen">↗</a>
+    </nav>
   </header>
 
   <main class="layout">
@@ -25,7 +35,7 @@
         <h2 id="h-route"><span class="num">1</span> Route</h2>
         <ol id="stops" class="stops"></ol>
         <div class="row">
-          <button type="button" id="add-stop" class="btn btn-ghost">+ Zwischenstopp</button>
+          <button type="button" id="add-stop" class="btn btn-ghost">+ Stopp</button>
           <button type="button" id="calc-route" class="btn btn-primary">Route berechnen</button>
         </div>
         <p id="route-info" class="info" role="status"></p>
@@ -58,7 +68,7 @@
       <section class="results" aria-labelledby="h-results" id="results-section" hidden>
         <h2 id="h-results">Ergebnisse <span id="result-count" class="count"></span></h2>
         <div id="chips" class="chips" role="group" aria-label="Nach Suchbegriff filtern"></div>
-        <p class="info results-hint">Merken und Nachrichten direkt auf Kleinanzeigen – dort bist du in deinem Browser angemeldet.</p>
+        <p class="info results-hint">Klick auf eine Anzeige zeigt sie auf der Karte. ♥ merkt sie dir hier in der App, die Sprechblase hält Kontakt und Notizen fest.</p>
         <ul id="results" class="results-list"></ul>
       </section>
 
@@ -69,6 +79,38 @@
       <div id="map" role="application" aria-label="Karte mit Route und Anzeigen"></div>
     </div>
   </main>
+
+  <div id="backdrop" class="backdrop"></div>
+
+  <aside id="nav-drawer" class="drawer drawer-left" role="dialog" aria-modal="true" aria-labelledby="nav-title">
+    <div class="drawer-head">
+      <h2 id="nav-title">Trödeltour</h2>
+      <button type="button" class="icon-btn" id="nav-close" aria-label="Menü schließen" title="Schließen">×</button>
+    </div>
+    <div class="tabs" role="tablist" aria-label="Menü">
+      <button type="button" role="tab" id="tab-routes" aria-controls="panel-routes" aria-selected="true">Routen</button>
+      <button type="button" role="tab" id="tab-merk" aria-controls="panel-merk" aria-selected="false">Merkliste</button>
+    </div>
+    <div class="drawer-body" id="panel-routes" role="tabpanel" aria-labelledby="tab-routes">
+      <button type="button" id="new-route" class="btn btn-primary btn-wide">+ Neue Route</button>
+      <ul id="route-list" class="route-list"></ul>
+    </div>
+    <div class="drawer-body" id="panel-merk" role="tabpanel" aria-labelledby="tab-merk" hidden>
+      <p class="info small-note">Deine Merkliste liegt nur in dieser App. Auf Kleinanzeigen selbst merkst du dort separat:
+        <a href="https://www.kleinanzeigen.de/m-merkliste.html" target="_blank" rel="noopener">Merkliste auf Kleinanzeigen ↗</a></p>
+      <div id="merk-list"></div>
+    </div>
+  </aside>
+
+  <aside id="contact-aside" class="drawer drawer-right" role="dialog" aria-modal="true" aria-labelledby="contact-title">
+    <div class="drawer-head">
+      <h2 id="contact-title">Kontakt</h2>
+      <button type="button" class="icon-btn" id="contact-close" aria-label="Kontakt schließen" title="Schließen">×</button>
+    </div>
+    <div class="drawer-body" id="contact-body"></div>
+  </aside>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
     integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
