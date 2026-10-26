@@ -1,6 +1,7 @@
 // Builds the Google Play graphics in docs/play/graphics/: 512 icon, 1024x500 feature graphic, 4 phone screenshots (1080x1920).
-// Screenshots come from the desktop server (own temp store, port 3111) with a real Hamburg → München search, cached in
-// .tmp-play/seed.json so reruns don't hit Kleinanzeigen again. Playwright is not a dependency:
+// Screenshots come from the desktop server (own temp store, port 3700) seeded with INVENTED listings
+// (scripts/play-demo-listings.js) and CC0/PD photos (docs/play/demo-images); the route is fetched once (OSRM) and cached
+// in .tmp-play/route.json. Nothing is requested from kleinanzeigen.de. Playwright is not a dependency:
 //   PLAYWRIGHT_DIR=<dir whose node_modules contains playwright> node scripts/play-graphics.js [icon|feature|shots]
 import sharp from 'sharp';
 import { spawn } from 'node:child_process';
@@ -10,6 +11,7 @@ import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { demoResults, PICKS, IMAGE_BASE } from './play-demo-listings.js';
 
 const root = join(fileURLToPath(import.meta.url), '..', '..');
 const out = join(root, 'docs', 'play', 'graphics');
@@ -49,10 +51,11 @@ if (what === 'all' || what === 'feature') {
 if (what === 'all' || what === 'shots') await shots();
 
 async function shots() {
-  const PORT = 3111;
+  const PORT = 3700;
   const base = `http://localhost:${PORT}`;
-  const store = join(tmp, 'store.json');
+  const store = join(tmpdir(), 'troedel-play-store.json');
   await rm(store, { force: true });
+  const plzTable = JSON.parse(await readFile(join(root, 'data', 'plz-de.json'), 'utf8'));
   const server = spawn(process.execPath, ['server/index.js'], { cwd: root, env: { ...process.env, PORT: String(PORT), TROEDEL_STORE: store }, stdio: 'ignore' });
   try {
     for (let i = 0; i < 40; i++) {
@@ -65,40 +68,28 @@ async function shots() {
       if (!res.ok) throw new Error(`${method} ${path}: ${json.error}`);
       return json;
     };
-    const seedFile = join(tmp, 'seed.json');
-    let seed;
-    if (existsSync(seedFile)) seed = JSON.parse(await readFile(seedFile, 'utf8'));
+    // waypoints straight from the PLZ table (no geocoder); the route geometry is fetched once (OSRM) and cached
+    const places = [['Hamburg', '20095'], ['Göttingen', '37073'], ['München', '80331']].map(([label, plz]) => ({ label, lat: plzTable.plz[plz][0], lon: plzTable.plz[plz][1] }));
+    const routeFile = join(tmp, 'route.json');
+    let route;
+    if (existsSync(routeFile)) route = JSON.parse(await readFile(routeFile, 'utf8'));
     else {
-      const places = [];
-      for (const q of ['Hamburg', 'Göttingen', 'München']) {
-        const [g] = await call('GET', `/api/geocode?q=${encodeURIComponent(q)}`);
-        places.push({ label: q, lat: g.lat, lon: g.lon });
-        await new Promise((r) => setTimeout(r, 1100));
-      }
-      const route = await call('POST', '/api/route', { waypoints: places });
-      const items = [{ query: 'Fahrrad', minPrice: null, maxPrice: 300 }, { query: 'Plattenspieler', minPrice: null, maxPrice: null }];
-      const { jobId } = await call('POST', '/api/search', { geometry: route.geometry, corridorKm: 15, items, stops: [] });
-      let job;
-      do {
-        await new Promise((r) => setTimeout(r, 3000));
-        job = await call('GET', `/api/search/${jobId}`);
-        console.log(`search ${job.status} ${job.progress?.done}/${job.progress?.total} results=${job.results.length}`);
-      } while (job.status === 'running');
-      seed = { places, route, items, results: job.results };
-      await writeFile(seedFile, JSON.stringify(seed));
+      route = await call('POST', '/api/route', { waypoints: places });
+      await writeFile(routeFile, JSON.stringify(route));
     }
+    // invented listings (no request to kleinanzeigen.de); photos are served from docs/play/demo-images via page.route
+    const results = demoResults(route, plzTable);
+    const items = [{ query: 'Fahrrad', minPrice: null, maxPrice: null }, { query: 'Plattenspieler', minPrice: null, maxPrice: null }];
     const saved = await call('POST', '/api/routes', {
       name: 'Hamburg–München',
-      waypoints: seed.places.map((p, i) => ({ ...p, radiusKm: 0, i })),
-      items: seed.items, corridorKm: 15, searchMode: 'corridor',
-      geometry: seed.route.geometry, distanceKm: seed.route.distanceKm, durationMin: seed.route.durationMin,
-      results: seed.results, searchedAt: new Date().toISOString(),
+      waypoints: places.map((p, i) => ({ ...p, radiusKm: 0, i })),
+      items, corridorKm: 15, searchMode: 'corridor',
+      geometry: route.geometry, distanceKm: route.distanceKm, durationMin: route.durationMin,
+      results, searchedAt: new Date().toISOString(),
     });
-    // a few favourites and contact states, spread along the route
-    const pick = [0.15, 0.35, 0.55, 0.75].map((f) => seed.results[Math.floor(seed.results.length * f)]).filter(Boolean);
+    const pick = PICKS.map(([title]) => results.find((r) => r.title === title));
     for (const ad of pick.slice(0, 3)) await call('PUT', `/api/merkliste/${ad.adid}`, { ad, routeId: saved.id });
-    const states = ['angeschrieben', 'antwort', 'vereinbart', 'abgeholt'];
-    for (const [i, ad] of pick.entries()) await call('PUT', `/api/contacts/${ad.adid}`, { status: states[i] });
+    for (const [i, ad] of pick.entries()) await call('PUT', `/api/contacts/${ad.adid}`, { status: PICKS[i][1] });
     await call('POST', `/api/contacts/${pick[2].adid}/notes`, { text: 'Abholung Samstag 10 Uhr, Bargeld mitbringen' });
     await call('POST', `/api/contacts/${pick[2].adid}/notes`, { text: 'Adresse per Nachricht bekommen' });
 
@@ -107,6 +98,7 @@ async function shots() {
     const shoot = async (name, theme, act) => {
       const ctx = await browser.newContext({ viewport: { width: 360, height: 640 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true, locale: 'de-DE' });
       await ctx.addInitScript(([t, id]) => { localStorage.setItem('troedeltour.theme', t); localStorage.setItem('troedeltour.lastRoute', id); }, [theme, saved.id]);
+      await ctx.route(`${IMAGE_BASE}**`, (r) => r.fulfill({ path: join(root, 'docs', 'play', 'demo-images', new URL(r.request().url()).pathname.slice(1)), contentType: 'image/jpeg' }));
       const page = await ctx.newPage();
       await page.goto(base);
       await page.waitForSelector('body[data-ready="1"]');
