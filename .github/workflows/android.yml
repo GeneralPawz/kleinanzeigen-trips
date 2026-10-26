@@ -4,6 +4,15 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      upload_to_play:
+        description: Upload the bundle to the Play internal track
+        type: boolean
+        default: false
+      debug_apk:
+        description: Also build a debug APK artifact
+        type: boolean
+        default: false
 
 permissions:
   contents: write
